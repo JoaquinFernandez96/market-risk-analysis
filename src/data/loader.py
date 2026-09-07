@@ -151,42 +151,71 @@ class MarketDataLoader:
     def generate_simulated_returns(
         cls,
         scenario: str = "base",
+        tickers: List[str] = None,
         num_days: int = 504,
         seed: int = 42
     ) -> pd.DataFrame:
-        """Generates a realistic multi-asset daily return time series for the portfolio
+        """Generates a realistic multi-asset daily return time series for arbitrary tickers
 
         using Cholesky decomposition with Student-t fat tails.
         """
         np.random.seed(seed)
+        active_tickers = tickers if tickers is not None else ALL_TICKERS
 
         if scenario.lower() == "stress":
-            vols, corr = cls._get_stress_parameters()
-            # Fatter tails and negative drift in stress regime (Student-t with df=4)
+            base_vols, base_corr = cls._get_stress_parameters()
             df_t = 4
-            daily_drift = -0.0015  # -38% annual downward drift
+            daily_drift = -0.0015
         else:
-            vols, corr = cls._get_base_parameters()
+            base_vols, base_corr = cls._get_base_parameters()
             df_t = 7
-            daily_drift = 0.0004   # Moderate positive drift
+            daily_drift = 0.0004
 
-        daily_vols = np.array([vols[t] / np.sqrt(252) for t in ALL_TICKERS])
+        n = len(active_tickers)
+        # Build specific vol vector and correlation matrix for active_tickers
+        vols_list = []
+        for t in active_tickers:
+            if t in base_vols:
+                vols_list.append(base_vols[t])
+            elif ".BA" in t or "EQUITY" in t.upper():
+                vols_list.append(0.42 * (2.1 if scenario.lower() == "stress" else 1.0))
+            elif any(b in t for b in ["GD", "AL", "TX", "AE", "T2V", "BON"]):
+                vols_list.append(0.30 * (2.3 if scenario.lower() == "stress" else 1.0))
+            else:
+                vols_list.append(0.35 * (2.2 if scenario.lower() == "stress" else 1.0))
 
-        # Cholesky decomposition of correlation matrix
+        daily_vols = np.array([v / np.sqrt(252) for v in vols_list])
+
+        # Construct correlation matrix for active_tickers
+        corr = np.eye(n)
+        for i, t1 in enumerate(active_tickers):
+            for j, t2 in enumerate(active_tickers):
+                if i == j:
+                    continue
+                if t1 in ALL_TICKERS and t2 in ALL_TICKERS:
+                    idx1 = ALL_TICKERS.index(t1)
+                    idx2 = ALL_TICKERS.index(t2)
+                    corr[i, j] = base_corr[idx1, idx2]
+                else:
+                    corr[i, j] = 0.70 if scenario.lower() == "stress" else 0.40
+
+        # Regularize and Cholesky
+        eigvals, eigvecs = np.linalg.eigh(corr)
+        eigvals = np.maximum(eigvals, 1e-6)
+        corr = eigvecs @ np.diag(eigvals) @ eigvecs.T
+        inv_diag = 1.0 / np.sqrt(np.diag(corr))
+        corr = corr * np.outer(inv_diag, inv_diag)
+
         L = np.linalg.cholesky(corr)
 
-        # Generate correlated t-distributed innovations
-        raw_innovations = np.random.standard_t(df=df_t, size=(num_days, len(ALL_TICKERS)))
-        # Normalize variance of t-distribution (var = df / (df - 2))
+        raw_innovations = np.random.standard_t(df=df_t, size=(num_days, n))
         raw_innovations = raw_innovations / np.sqrt(df_t / (df_t - 2))
 
         correlated_innovations = raw_innovations @ L.T
         daily_returns = daily_drift + correlated_innovations * daily_vols
 
-        # Create dates index (trailing business days)
         dates = pd.date_range(end="2026-09-04", periods=num_days, freq="B")
-
-        return pd.DataFrame(daily_returns, index=dates, columns=ALL_TICKERS)
+        return pd.DataFrame(daily_returns, index=dates, columns=active_tickers)
 
     @classmethod
     def fetch_live_equity_data(cls, period: str = "1y") -> Dict[str, pd.Series]:

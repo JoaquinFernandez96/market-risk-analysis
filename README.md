@@ -68,6 +68,23 @@ Pre-configured historical crisis replays and interactive factor sliders:
 
 ---
 
+## Monthly Portfolio Updates via `input.xlsx`
+
+The system is fully modular and allows risk managers to update holdings, prices, notionals, and risk parameters every month through an Excel spreadsheet:
+
+### Workbook Tabs
+1. **`Equities`**: BYMA stock tickers, quantities, unit prices, market values, sectors, and betas.
+2. **`Bonds`**: Argentine sovereign debt issues, nominal quantities, clean prices, maturities, coupons, YTMs, duration, and convexity.
+3. **`Derivatives`**: Listed & OTC contracts (Rofex Futures, Options, NDFs, Interest Rate Swaps) with notionals, MTM values, and Greeks.
+4. **`Settings`**: Monthly reporting cycle, USD/ARS CCL rate, default confidence levels, holding horizon, and stress multipliers.
+
+### Updating Workflow
+- Edit `input.xlsx` in Excel and save. The dashboard will automatically read the updated holdings upon reload.
+- Alternatively, upload any `.xlsx` file directly into the **Sidebar File Uploader** during monthly presentations without restarting the application.
+- Click **"📥 Download Template (input.xlsx)"** in the sidebar to export the working format.
+
+---
+
 ## Installation & Running
 
 ### Prerequisites
@@ -102,12 +119,15 @@ pytest -v tests/
 ```
 market-risk-analysis/
 ├── app.py                      # Interactive Streamlit dashboard
+├── input.xlsx                  # Master Excel workbook for monthly updates
+├── create_template_excel.py    # Generator script for master input workbook
 ├── requirements.txt            # Python dependencies
 ├── README.md                   # System documentation & math formulation
 ├── .gitignore                  # Git exclusions
 ├── src/
 │   ├── portfolio/
-│   │   ├── models.py           # Portfolio, Position, and asset definitions
+│   │   ├── models.py           # Portfolio & Position data models
+│   │   ├── excel_loader.py     # Parser for input.xlsx workbooks & buffers
 │   │   └── __init__.py
 │   ├── pricing/
 │   │   ├── bonds.py            # Argentine sovereign debt pricer & duration
@@ -121,6 +141,7 @@ market-risk-analysis/
 │       ├── stress_testing.py   # Historical crisis scenarios & factor shocks
 │       └── __init__.py
 └── tests/
+    ├── test_excel_loader.py    # Unit tests for Excel workbook loading & dynamic assets
     ├── test_pricing.py         # Unit tests for bonds, options, and Greeks
     └── test_risk.py            # Unit tests for VaR, CVaR, and stress engine
 ```

@@ -22,16 +22,17 @@ class VaREngine:
         self.portfolio.update_weights()
         self.total_value = self.portfolio.total_value
 
-        # Match weights array to ALL_TICKERS order
-        pos_dict = {p.ticker: p for p in self.portfolio.positions}
-        self.weights = np.array([
-            pos_dict[t].market_value / self.total_value if t in pos_dict else 0.0
-            for t in ALL_TICKERS
-        ])
+        # Dynamic list of active tickers from portfolio
+        self.tickers = [p.ticker for p in self.portfolio.positions]
+        self.weights = np.array([p.weight for p in self.portfolio.positions])
 
-        # Preload base and stress simulated historical return datasets
-        self.base_returns_df = MarketDataLoader.generate_simulated_returns(scenario="base", num_days=504, seed=42)
-        self.stress_returns_df = MarketDataLoader.generate_simulated_returns(scenario="stress", num_days=504, seed=101)
+        # Preload base and stress simulated historical return datasets for active tickers
+        self.base_returns_df = MarketDataLoader.generate_simulated_returns(
+            scenario="base", tickers=self.tickers, num_days=504, seed=42
+        )
+        self.stress_returns_df = MarketDataLoader.generate_simulated_returns(
+            scenario="stress", tickers=self.tickers, num_days=504, seed=101
+        )
 
     def calculate_parametric_var(
         self,
@@ -40,7 +41,7 @@ class VaREngine:
         horizon_days: int = 1
     ) -> Dict[str, float]:
         """Calculates Parametric (Variance-Covariance) VaR and CVaR."""
-        cov_matrix = returns_df[ALL_TICKERS].cov().values
+        cov_matrix = returns_df[self.tickers].cov().values
         port_var = float(self.weights.T @ cov_matrix @ self.weights)
         port_vol = np.sqrt(max(port_var, 1e-8))
 
@@ -79,7 +80,7 @@ class VaREngine:
     ) -> Dict[str, float]:
         """Calculates Non-Parametric Historical Simulation VaR and CVaR."""
         # Daily portfolio returns series
-        port_daily_returns = returns_df[ALL_TICKERS].values @ self.weights
+        port_daily_returns = returns_df[self.tickers].values @ self.weights
 
         # Scale returns to horizon if > 1 day
         if horizon_days > 1:
@@ -119,16 +120,16 @@ class VaREngine:
     ) -> Dict[str, float]:
         """Calculates Monte Carlo VaR and CVaR with 10,000 simulated correlated draws."""
         np.random.seed(seed)
-        cov_matrix = returns_df[ALL_TICKERS].cov().values
-        means = returns_df[ALL_TICKERS].mean().values
+        cov_matrix = returns_df[self.tickers].cov().values
+        means = returns_df[self.tickers].mean().values
 
         # Cholesky decomposition of covariance
         # Add small regularization to diagonal if needed
-        diag_reg = np.eye(len(ALL_TICKERS)) * 1e-7
+        diag_reg = np.eye(len(self.tickers)) * 1e-7
         L = np.linalg.cholesky(cov_matrix + diag_reg)
 
         # Standard normal random matrix (num_simulations x num_assets)
-        Z = np.random.normal(0, 1, size=(num_simulations, len(ALL_TICKERS)))
+        Z = np.random.normal(0, 1, size=(num_simulations, len(self.tickers)))
 
         # Correlated simulated 1-day returns
         sim_returns_1d = means + Z @ L.T
@@ -171,7 +172,7 @@ class VaREngine:
         pos_dict = {p.ticker: p for p in self.portfolio.positions}
 
         records = []
-        for i, ticker in enumerate(ALL_TICKERS):
+        for i, ticker in enumerate(self.tickers):
             pos = pos_dict.get(ticker)
             cvar_i = comp_vars[i]
             pct_contrib = (cvar_i / total_var * 100.0) if total_var > 0 else 0.0

@@ -1,7 +1,4 @@
-"""Argentine Trading Portfolio - Market Risk Analysis Dashboard.
-Interactive Streamlit application featuring Base vs. Stressed VaR, CVaR,
-Fixed Income analytics, Derivatives Greeks, and Macro Scenario Stress Testing.
-"""
+import os
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -10,6 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from src.portfolio.models import create_default_portfolio, AssetClass
+from src.portfolio.excel_loader import load_portfolio_from_excel, get_excel_template_bytes, DEFAULT_SETTINGS
 from src.pricing.bonds import ArgentineBondPricer
 from src.pricing.derivatives import DerivativesRiskEngine, BlackScholesOption
 from src.risk.var_engine import VaREngine
@@ -62,48 +60,78 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-@st.cache_resource
-def get_initialized_engines():
-    portfolio = create_default_portfolio()
-    var_engine = VaREngine(portfolio)
-    stress_engine = StressTestEngine(portfolio)
-    return portfolio, var_engine, stress_engine
-
-
-portfolio, var_engine, stress_engine = get_initialized_engines()
-
-# --- SIDEBAR CONTROLS ---
+# --- SIDEBAR: MONTHLY DATA SOURCE (EXCEL) ---
 st.sidebar.image("https://img.icons8.com/fluency/96/bullish.png", width=64)
-st.sidebar.title("Risk Parameters")
+st.sidebar.title("Portfolio Settings")
 
-st.sidebar.markdown("### Portfolio Currency")
-fx_rate = st.sidebar.number_input("USD/ARS CCL Rate", min_value=500.0, max_value=5000.0, value=1280.0, step=10.0)
+st.sidebar.markdown("### 📁 Monthly Data Source")
+uploaded_file = st.sidebar.file_uploader("Upload Monthly `input.xlsx`", type=["xlsx", "xls"])
+
+if uploaded_file is not None:
+    portfolio, settings = load_portfolio_from_excel(uploaded_file)
+    source_label = f"Uploaded `{uploaded_file.name}`"
+elif os.path.exists("input.xlsx"):
+    portfolio, settings = load_portfolio_from_excel("input.xlsx")
+    source_label = "Local `input.xlsx`"
+else:
+    portfolio = create_default_portfolio()
+    settings = DEFAULT_SETTINGS.copy()
+    source_label = "Default System Portfolio"
+
+st.sidebar.success(f"**Source**: {source_label}\n\n**Cycle**: {settings.get('Reporting_Month', 'Monthly')}")
+
+# Download template button
+template_bytes = get_excel_template_bytes()
+st.sidebar.download_button(
+    label="📥 Download Template (input.xlsx)",
+    data=template_bytes,
+    file_name="input.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    help="Download formatted Excel workbook template to update monthly holdings and parameters."
+)
+
+var_engine = VaREngine(portfolio)
+stress_engine = StressTestEngine(portfolio)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Currency & Valuation")
+default_ccl = float(settings.get("USD_ARS_CCL_Rate", 1280.0))
+fx_rate = st.sidebar.number_input("USD/ARS CCL Rate", min_value=500.0, max_value=5000.0, value=default_ccl, step=10.0)
 curr_view = st.sidebar.radio("Display Currency", ["USD ($)", "ARS ($)"], horizontal=True)
 curr_mult = fx_rate if curr_view == "ARS ($)" else 1.0
 curr_sym = "ARS $" if curr_view == "ARS ($)" else "USD $"
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### VaR Configuration")
+default_conf = float(settings.get("Default_Confidence_Level", 0.95))
+conf_options = [0.90, 0.95, 0.975, 0.99, 0.999]
+conf_index = conf_options.index(default_conf) if default_conf in conf_options else 1
 conf_level = st.sidebar.select_slider(
     "Confidence Level (α)",
-    options=[0.90, 0.95, 0.975, 0.99, 0.999],
-    value=0.95,
+    options=conf_options,
+    value=conf_options[conf_index],
     format_func=lambda x: f"{x * 100:.1f}%"
 )
 
+default_horizon = int(settings.get("Default_Holding_Period_Days", 1))
+horizon_options = [1, 5, 10, 21]
+h_index = horizon_options.index(default_horizon) if default_horizon in horizon_options else 0
 horizon_days = st.sidebar.selectbox(
     "Holding Period Horizon",
-    options=[1, 5, 10, 21],
-    index=0,
+    options=horizon_options,
+    index=h_index,
     format_func=lambda d: f"{d} Day{'s' if d > 1 else ''} ({'Basel standard' if d == 10 else ('1 Month' if d == 21 else ('1 Week' if d == 5 else 'Daily'))})"
 )
 
 st.sidebar.markdown("---")
+num_eq = len(portfolio.get_positions_by_class(AssetClass.EQUITY))
+num_bd = len(portfolio.get_positions_by_class(AssetClass.BOND))
+num_der = len(portfolio.get_positions_by_class(AssetClass.DERIVATIVE))
 st.sidebar.info(
-    "💡 **Portfolio Composition**: 15 Assets ($10M USD NAV)\n\n"
-    "• 5 BYMA Equities (YPF, GGAL, PAMP, BMA, TXAR)\n"
-    "• 5 Sovereign Bonds (GD30, AL30, GD35, AL35, GD38)\n"
-    "• 5 Derivatives (Rofex Futures, Options, NDF, BADLAR IRS)"
+    f"💡 **Active Portfolio Book**: {len(portfolio.positions)} Positions\n\n"
+    f"• **Equities**: {num_eq} positions\n"
+    f"• **Sovereign Debt**: {num_bd} positions\n"
+    f"• **Derivatives**: {num_der} contracts"
 )
 
 
@@ -385,47 +413,67 @@ with tab_bonds:
     st.subheader("Argentine Restructured Sovereign Debt Analytics")
     st.caption("Cash flow discounting, Yield-to-Maturity (YTM), Macaulay & Modified Duration, Convexity, and DV01.")
 
-    bond_analytics = ArgentineBondPricer.get_portfolio_bond_analytics()
-    df_bonds = pd.DataFrame(bond_analytics)
+    bonds = portfolio.get_positions_by_class(AssetClass.BOND)
+    bond_analytics = []
+    for b in bonds:
+        d = b.details
+        ytm_val = float(d.get("ytm", 0.16))
+        mod_dur = float(d.get("modified_duration", 3.0))
+        conv = float(d.get("convexity", 10.0))
+        clean_p = b.unit_price * 100.0 if b.unit_price < 2.0 else b.unit_price
+        bond_analytics.append({
+            "ticker": b.ticker,
+            "name": b.name,
+            "law": d.get("law", "New York"),
+            "clean_price": round(clean_p, 2),
+            "ytm_percent": round(ytm_val * 100, 2) if ytm_val < 1.0 else round(ytm_val, 2),
+            "macaulay_duration": round(mod_dur * (1.0 + (ytm_val if ytm_val < 1.0 else ytm_val/100)/2.0), 2),
+            "modified_duration": round(mod_dur, 2),
+            "convexity": round(conv, 2),
+            "dv01_per_100": round(float(d.get("dv01", 300.0)), 2),
+        })
 
-    b_col1, b_col2 = st.columns([1.2, 1])
+    df_bonds = pd.DataFrame(bond_analytics) if bond_analytics else pd.DataFrame()
 
-    with b_col1:
-        # Yield curve plot
-        fig_yc = px.line(
-            df_bonds,
-            x="modified_duration",
-            y="ytm_percent",
-            text="ticker",
-            markers=True,
-            title="Sovereign Yield vs. Modified Duration Curve",
-            labels={"modified_duration": "Modified Duration (Years)", "ytm_percent": "Yield to Maturity (YTM %)"}
-        )
-        fig_yc.update_traces(textposition="top center", line_color="#10b981", marker=dict(size=12))
-        fig_yc.update_layout(height=360, margin=dict(t=40, b=20, l=10, r=10))
-        st.plotly_chart(fig_yc, use_container_width=True)
+    if not df_bonds.empty:
+        b_col1, b_col2 = st.columns([1.2, 1])
 
-    with b_col2:
-        # Duration & Convexity comparison bar
-        fig_dur = px.bar(
-            df_bonds,
-            x="ticker",
-            y=["modified_duration", "convexity"],
-            barmode="group",
-            title="Duration & Convexity Profile across Issues",
-            labels={"value": "Metric Value", "ticker": "Bond Issue"}
-        )
-        fig_dur.update_layout(height=360, margin=dict(t=40, b=20, l=10, r=10))
-        st.plotly_chart(fig_dur, use_container_width=True)
+        with b_col1:
+            # Yield curve plot
+            fig_yc = px.line(
+                df_bonds,
+                x="modified_duration",
+                y="ytm_percent",
+                text="ticker",
+                markers=True,
+                title="Sovereign Yield vs. Modified Duration Curve",
+                labels={"modified_duration": "Modified Duration (Years)", "ytm_percent": "Yield to Maturity (YTM %)"}
+            )
+            fig_yc.update_traces(textposition="top center", line_color="#10b981", marker=dict(size=12))
+            fig_yc.update_layout(height=360, margin=dict(t=40, b=20, l=10, r=10))
+            st.plotly_chart(fig_yc, use_container_width=True)
 
-    st.markdown("### Sovereign Bond Risk Sensitivity Table")
-    df_bonds_display = df_bonds.copy()
-    df_bonds_display.columns = [
-        "Ticker", "Bond Name", "Governing Law", "Clean Price ($)",
-        "YTM (%)", "Macaulay Duration (Yrs)", "Modified Duration (Yrs)",
-        "Convexity", "DV01 ($ / 100 Nom)"
-    ]
-    st.dataframe(df_bonds_display, use_container_width=True, hide_index=True)
+        with b_col2:
+            # Duration & Convexity comparison bar
+            fig_dur = px.bar(
+                df_bonds,
+                x="ticker",
+                y=["modified_duration", "convexity"],
+                barmode="group",
+                title="Duration & Convexity Profile across Issues",
+                labels={"value": "Metric Value", "ticker": "Bond Issue"}
+            )
+            fig_dur.update_layout(height=360, margin=dict(t=40, b=20, l=10, r=10))
+            st.plotly_chart(fig_dur, use_container_width=True)
+
+        st.markdown("### Sovereign Bond Risk Sensitivity Table")
+        df_bonds_display = df_bonds.copy()
+        df_bonds_display.columns = [
+            "Ticker", "Bond Name", "Governing Law", "Clean Price ($)",
+            "YTM (%)", "Macaulay Duration (Yrs)", "Modified Duration (Yrs)",
+            "Convexity", "DV01 ($ / 100 Nom)"
+        ]
+        st.dataframe(df_bonds_display, use_container_width=True, hide_index=True)
 
     # Dynamic Yield Shift Simulation
     st.markdown("#### Yield Shift Simulator (Parallel Shift)")
@@ -458,21 +506,39 @@ with tab_derivatives:
     st.subheader("Derivatives Book & Greek Risk Sensitivities")
     st.caption("Exchange-traded Rofex futures, GGAL options (Call/Put), OTC USD/ARS NDF, and OTC BADLAR IRS.")
 
-    sens_dict = DerivativesRiskEngine.get_all_derivatives_sensitivities()
+    derivs = portfolio.get_positions_by_class(AssetClass.DERIVATIVE)
+    sens_dict = {}
+    for d in derivs:
+        dt = d.details
+        notional_val = d.notional if d.notional else d.market_value
+        delta_val = float(dt.get("delta", 1.0))
+        sens_dict[d.ticker] = {
+            "name": d.name,
+            "type": dt.get("type", "Derivative"),
+            "notional": notional_val,
+            "market_value": d.market_value,
+            "delta": delta_val,
+            "delta_usd": delta_val * notional_val,
+            "gamma": float(dt.get("gamma", 0.0)),
+            "vega": float(dt.get("vega", 0.0)),
+            "theta": float(dt.get("theta", 0.0)),
+            "dv01": float(dt.get("dv01", 0.0)),
+            "description": dt.get("description", "")
+        }
 
     g_col1, g_col2, g_col3, g_col4 = st.columns(4)
     with g_col1:
         total_delta = sum(v.get("delta_usd", 0.0) for v in sens_dict.values()) * curr_mult
         st.metric("Aggregate USD Delta Exposure", f"{curr_sym} {total_delta:,.0f}")
     with g_col2:
-        total_vega = (sens_dict["GGAL_C_ATM"]["vega"] + sens_dict["GGAL_P_OTM"]["vega"]) * curr_mult
-        st.metric("Total Equity Vega (GGAL)", f"{curr_sym} {total_vega:,.0f} / vol pt")
+        total_vega = sum(v.get("vega", 0.0) for v in sens_dict.values()) * curr_mult
+        st.metric("Total Equity Vega", f"{curr_sym} {total_vega:,.0f} / vol pt")
     with g_col3:
-        total_theta = (sens_dict["GGAL_C_ATM"]["theta"] + sens_dict["GGAL_P_OTM"]["theta"]) * curr_mult
+        total_theta = sum(v.get("theta", 0.0) for v in sens_dict.values()) * curr_mult
         st.metric("Total Options Theta Decay", f"{curr_sym} {total_theta:,.0f} / day")
     with g_col4:
-        total_dv01 = sens_dict["BADLAR_IRS_1Y"]["dv01"] * curr_mult
-        st.metric("Rates DV01 (BADLAR IRS)", f"{curr_sym} {total_dv01:,.0f} / bp")
+        total_dv01 = sum(v.get("dv01", 0.0) for v in sens_dict.values()) * curr_mult
+        st.metric("Rates DV01 (IRS / Swaps)", f"{curr_sym} {total_dv01:,.0f} / bp")
 
     # Options Payoff Profile Plot
     st.markdown("### GGAL Option Strategy Payoff Profile (Collar / Combined Long Call + Put)")
