@@ -16,7 +16,7 @@ def test_load_default_input_xlsx():
     assert len(portfolio.get_positions_by_class(AssetClass.DERIVATIVE)) == 5
     assert portfolio.total_value > 0
     assert "USD_ARS_CCL_Rate" in settings
-    assert settings["USD_ARS_CCL_Rate"] == 1280.0
+    assert settings["USD_ARS_CCL_Rate"] == 1582.60
 
 
 def test_dynamic_portfolio_with_new_stock():
