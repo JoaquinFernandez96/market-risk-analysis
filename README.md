@@ -68,6 +68,41 @@ Pre-configured historical crisis replays and interactive factor sliders:
 
 ---
 
+## User Guide: Monthly Risk Presentation Walkthrough
+
+This guide explains how to operate the system, update monthly holdings, and run presentations step by step.
+
+### 1. Updating Your Monthly Portfolio (`input.xlsx`)
+Whenever your trading book changes at month-end:
+1. Open [`input.xlsx`](input.xlsx) in Microsoft Excel.
+2. Update the tabs as needed:
+   - **`Equities`**: Update share quantities or prices in USD/ARS. If you swap or add a stock (e.g. adding `ALUA.BA` or `CEPU.BA`), just insert a row.
+   - **`Bonds`**: Update clean prices or nominal amounts for your Argentine sovereign bonds.
+   - **`Derivatives`**: Adjust contract quantities, option strikes, FX futures notionals, or swap terms.
+   - **`Settings`**: Update the **USD/ARS CCL Rate**, **Reporting Month** label (e.g. `October 2026`), and default VaR parameters.
+3. Save the file. The dashboard will automatically reflect the changes upon reload.
+
+### 2. Launching & Presenting the Dashboard
+Open your terminal in the project directory and execute:
+```bash
+streamlit run app.py
+```
+Your browser will open `http://localhost:8501`.
+
+### 3. How to Present to Stakeholders
+- **Sidebar Controls**:
+  - **Live Excel Uploader**: You can upload a new `input.xlsx` file directly in the browser during a meeting without restarting the application.
+  - **Currency Toggle**: Switch instantaneously between **USD ($)** and **ARS ($)** using the live CCL exchange rate.
+  - **Regulatory Confidence & Horizon**: Switch between **95% 1-Day** (internal risk limit) and **99% 10-Day** (Basel regulatory capital standard).
+- **Tab-by-Tab Presentation Flow**:
+  1. **📊 Overview**: Show total portfolio NAV (\$10.0M USD), asset class allocation pie chart, and individual position weights.
+  2. **⚡ VaR Analysis (Base vs. Stressed)**: Highlight the **Base VaR** vs. **Stressed VaR (sVaR)** cards, the **Stress Multiplier**, the regulatory capital buffer, and the loss distribution histograms with tail cutoff lines.
+  3. **🏛️ Fixed Income**: Review the sovereign yield curve, portfolio modified duration, and test yield shifts ($\pm 200$ bps) using the parallel shift slider.
+  4. **📈 Derivatives**: Review total USD Delta, options Vega, Theta decay, and the combined collar/put protection payoff curve.
+  5. **🌪️ Stress Testing**: Replay historical Argentine shocks (2019 PASO Black Monday, 2020 Restructuring, 2023 Devaluation) to demonstrate book drawdown resilience.
+
+---
+
 ## Monthly Portfolio Updates via `input.xlsx`
 
 The system is fully modular and allows risk managers to update holdings, prices, notionals, and risk parameters every month through an Excel spreadsheet:
@@ -93,7 +128,7 @@ The system is fully modular and allows risk managers to update holdings, prices,
 
 ### Setup
 ```bash
-# Clone the repository
+# Clone the repository (Private)
 git clone https://github.com/JoaquinFernandez96/market-risk-analysis.git
 cd market-risk-analysis
 
