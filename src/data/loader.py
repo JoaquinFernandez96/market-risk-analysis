@@ -177,14 +177,14 @@ class MarketDataLoader:
         is_cash = []
         for t in active_tickers:
             t_upper = t.upper()
-            if any(c in t_upper for c in ["CASH", "CAUCION", "LIQUID", "FCI_MM", "MONEY"]):
+            if any(c in t_upper for c in ["CASH", "CAUCION", "LIQUID", "FCI", "COCOS", "MONEY"]):
                 vols_list.append(0.0001)  # Near-zero volatility for cash/money market
                 is_cash.append(True)
             elif t in base_vols:
                 vols_list.append(base_vols[t])
                 is_cash.append(False)
-            elif any(c in t_upper for c in ["SPY", "QQQ", "AAPL", "NVDA", "MSFT", "AMZN", "MELI", "KO", "TSLA"]):
-                vols_list.append(0.20 * (1.8 if scenario.lower() == "stress" else 1.0))
+            elif any(c in t_upper for c in ["SPY", "QQQ", "AAPL", "NVDA", "MSFT", "AMZN", "MELI", "KO", "TSLA", "GOOGL", "V", "ADBE", "PBR", "PAGS", "COPX", "CEDEAR"]):
+                vols_list.append(0.22 * (1.8 if scenario.lower() == "stress" else 1.0))
                 is_cash.append(False)
             elif any(o in t_upper for o in ["YCA6O", "TLC1O", "IRCFO", "PAMPO", "ON"]):
                 vols_list.append(0.14 * (2.0 if scenario.lower() == "stress" else 1.0))
@@ -192,7 +192,7 @@ class MarketDataLoader:
             elif ".BA" in t or "EQUITY" in t_upper:
                 vols_list.append(0.42 * (2.1 if scenario.lower() == "stress" else 1.0))
                 is_cash.append(False)
-            elif any(b in t_upper for b in ["GD", "AL", "TX", "AE", "T2V", "BON"]):
+            elif any(b in t_upper for b in ["GD", "AL", "TX", "AE", "T2V", "BON", "T15", "T31", "BOP"]):
                 vols_list.append(0.30 * (2.3 if scenario.lower() == "stress" else 1.0))
                 is_cash.append(False)
             else:

@@ -133,6 +133,24 @@ def test_load_cocos_capital_csv():
         assert comp["stress"]["historical"]["var_dollar"] > 0
 
 
+def test_load_cocos_capital_excel():
+    """Verify loading input_cocos.xlsx spreadsheet containing Cocos broker holdings."""
+    xlsx_path = "input_cocos.xlsx"
+    import os
+    if os.path.exists(xlsx_path):
+        port, settings = load_portfolio_from_excel(xlsx_path)
+        assert len(port.positions) == 17
+        assert port.total_value > 20000.0  # ~$24,800 USD
+        assert len(port.get_positions_by_class(AssetClass.EQUITY)) == 11
+        assert len(port.get_positions_by_class(AssetClass.BOND)) == 3
+        assert len(port.get_positions_by_class(AssetClass.CASH)) == 3
+
+        # Test risk metrics on Excel version
+        engine = VaREngine(port)
+        res = engine.run_scenario_comparison(0.95, 1)
+        assert res["base"]["historical"]["var_dollar"] > 0
+
+
 def test_excel_template_bytes():
     """Verify template bytes are returned for user download."""
     data = get_excel_template_bytes()

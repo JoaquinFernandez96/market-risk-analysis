@@ -72,11 +72,15 @@ st.sidebar.image("https://img.icons8.com/fluency/96/bullish.png", width=64)
 st.sidebar.title("Portfolio Settings")
 
 st.sidebar.markdown("### 📁 Monthly Data Source")
-cocos_sample = "COCOS/portfolio_report_20260910.csv"
-has_cocos = os.path.exists(cocos_sample)
-source_options = ["input.xlsx (Standard Template)"]
-if has_cocos:
-    source_options.append("Cocos Capital CSV Statement")
+source_options = []
+if os.path.exists("input_cocos.xlsx") or os.path.exists("COCOS/input_cocos.xlsx"):
+    source_options.append("input_cocos.xlsx (Cocos Capital Portfolio)")
+if os.path.exists("COCOS/portfolio_report_20260910.csv"):
+    source_options.append("COCOS/portfolio_report_20260910.csv (Raw Broker CSV)")
+if os.path.exists("input.xlsx"):
+    source_options.append("input.xlsx (Active Portfolio)")
+if os.path.exists("input_institutional.xlsx"):
+    source_options.append("input_institutional.xlsx (Institutional $10M Book)")
 source_options.append("Upload File (Excel / CSV)")
 
 active_source_sel = st.sidebar.selectbox("Select Active Portfolio", source_options, index=0)
@@ -87,18 +91,36 @@ if active_source_sel == "Upload File (Excel / CSV)":
         portfolio, settings = load_portfolio_from_excel(uploaded_file)
         source_label = f"Uploaded `{uploaded_file.name}`"
     else:
-        portfolio, settings = load_portfolio_from_excel("input.xlsx")
-        source_label = "Local `input.xlsx` (waiting for upload)"
-elif active_source_sel == "Cocos Capital CSV Statement" and has_cocos:
-    portfolio, settings = load_portfolio_from_excel(cocos_sample)
-    source_label = "Cocos Capital Statement (Sept 2026)"
+        portfolio, settings = load_portfolio_from_excel("input_cocos.xlsx" if os.path.exists("input_cocos.xlsx") else "input.xlsx")
+        source_label = "Local Default File (waiting for upload)"
+elif "input_cocos" in active_source_sel:
+    target = "input_cocos.xlsx" if os.path.exists("input_cocos.xlsx") else "COCOS/input_cocos.xlsx"
+    portfolio, settings = load_portfolio_from_excel(target)
+    source_label = "Cocos Capital Excel (input_cocos.xlsx)"
+elif "CSV" in active_source_sel:
+    portfolio, settings = load_portfolio_from_excel("COCOS/portfolio_report_20260910.csv")
+    source_label = "Cocos Capital CSV Statement"
+elif "institutional" in active_source_sel:
+    portfolio, settings = load_portfolio_from_excel("input_institutional.xlsx")
+    source_label = "Institutional $10M Book"
 else:
     portfolio, settings = load_portfolio_from_excel("input.xlsx")
     source_label = "Local `input.xlsx`"
 
 st.sidebar.success(f"**Source**: {source_label}\n\n**Cycle**: {settings.get('Reporting_Month', 'Monthly')}")
 
-# Download template button
+# Download template buttons
+if os.path.exists("input_cocos.xlsx"):
+    with open("input_cocos.xlsx", "rb") as f:
+        cocos_xlsx_bytes = f.read()
+    st.sidebar.download_button(
+        label="📥 Download Cocos Input (input_cocos.xlsx)",
+        data=cocos_xlsx_bytes,
+        file_name="input_cocos.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        help="Download your Cocos Capital portfolio formatted as a master input spreadsheet."
+    )
+
 template_bytes = get_excel_template_bytes()
 st.sidebar.download_button(
     label="📥 Download Template (input.xlsx)",

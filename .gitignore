@@ -52,3 +52,8 @@ Desktop.ini
 htmlcov/
 cache/
 data/cache/
+
+# Office temporary lock files
+~$*.xlsx
+~$*.xls
+~$*.csv
