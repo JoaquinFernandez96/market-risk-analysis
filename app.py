@@ -458,9 +458,16 @@ with tab_schedules:
         )
         lookback_days = 504 if "All" in lookback_choice else (252 if "1 Year" in lookback_choice else 126)
     with f_c3:
-        chart_curr = st.radio("Chart Currency", ["USD ($)", "ARS ($)"], horizontal=True, index=0 if curr_view == "USD ($)" else 1)
+        chart_curr = st.radio("Currency", ["USD ($)", "ARS ($)"], horizontal=True, index=0 if curr_view == "USD ($)" else 1)
         curr_suffix = "USD" if chart_curr == "USD ($)" else "ARS"
         curr_symbol = "$" if chart_curr == "USD ($)" else "ARS $"
+
+    metric_mode = st.radio(
+        "Chart Metric Type",
+        ["Total Position Value ($)", "Unit Price ($ / share, bond, contract)"],
+        horizontal=True
+    )
+    is_unit_price = "Unit Price" in metric_mode
 
     # Generate schedules for active scenario
     active_returns_df = var_engine.stress_returns_df if active_scen_key == "stress" else var_engine.base_returns_df
@@ -471,10 +478,10 @@ with tab_schedules:
     df_pnl = generate_returns_pnl_schedule(sliced_returns, df_mv, portfolio, fx_rate)
 
     # 1. Interactive Visual Time-Series Chart
-    st.markdown(f"### Historical Market Value Evolution ({chart_curr})")
+    st.markdown(f"### Historical Evolution: {metric_mode} ({chart_curr})")
     all_tickers = [p.ticker for p in portfolio.positions]
-    chart_col_options = ["Portfolio NAV"] + all_tickers
-    default_selection = ["Portfolio NAV"] + [t for t in ["GD30", "AL30", "YPFD.BA", "GGAL.BA"] if t in all_tickers]
+    chart_col_options = (["Portfolio NAV"] if not is_unit_price else []) + all_tickers
+    default_selection = (["Portfolio NAV"] if not is_unit_price else []) + [t for t in ["GD30", "AL30", "YPFD.BA", "GGAL.BA"] if t in all_tickers]
     selected_series = st.multiselect(
         "Select Assets / Portfolios to Visualize:",
         options=chart_col_options,
@@ -484,19 +491,25 @@ with tab_schedules:
     if selected_series:
         fig_mv = go.Figure()
         for s in selected_series:
-            col_name = f"Portfolio_NAV_{curr_suffix}" if s == "Portfolio NAV" else f"{s}_{curr_suffix}"
+            if s == "Portfolio NAV":
+                col_name = f"Portfolio_NAV_{curr_suffix}"
+            elif is_unit_price:
+                col_name = f"{s}_UnitPrice_{curr_suffix}"
+            else:
+                col_name = f"{s}_TotalVal_{curr_suffix}"
+
             if col_name in df_mv.columns:
                 is_nav = (s == "Portfolio NAV")
                 fig_mv.add_trace(go.Scatter(
                     x=df_mv.index,
                     y=df_mv[col_name],
                     mode="lines",
-                    name=f"{s} ({curr_symbol})",
+                    name=f"{s} ({'Unit Price' if is_unit_price else 'Total Val'} {curr_symbol})",
                     line=dict(width=3.5 if is_nav else 1.8, dash="solid" if is_nav else "dot" if ("ROFEX" in s or "IRS" in s) else "solid")
                 ))
         fig_mv.update_layout(
             xaxis_title="Date",
-            yaxis_title=f"Market Value ({curr_symbol})",
+            yaxis_title=f"{'Unit Price' if is_unit_price else 'Total Market Value'} ({curr_symbol})",
             margin=dict(t=30, b=20, l=10, r=10),
             height=400,
             hovermode="x unified",
@@ -506,15 +519,15 @@ with tab_schedules:
 
     # 2. Supporting Schedules Sub-Tabs
     sub_mv, sub_pnl, sub_param, sub_tail = st.tabs([
-        "📈 Market Value Evolution (USD & ARS)",
+        "📈 Market Value & Unit Price History",
         "💰 Daily Returns & Dollar PnL",
         "📐 Parametric Covariance & Correlation",
         "🎯 Empirical Tail-Loss Audit"
     ])
 
     with sub_mv:
-        st.markdown(f"##### Daily Market Value Table ({schedule_scenario})")
-        st.caption("Normalized historical evolution ending at current portfolio NAV.")
+        st.markdown(f"##### Daily Unit Prices & Position Market Values ({schedule_scenario})")
+        st.caption("💡 **Column Guide**: `_UnitPrice_USD` / `_UnitPrice_ARS` = price per single share/contract/nominal unit | `_TotalVal_USD` / `_TotalVal_ARS` = total portfolio holding value.")
         display_mv = df_mv.copy()
         display_mv.index = display_mv.index.strftime("%Y-%m-%d")
         st.dataframe(display_mv, use_container_width=True)

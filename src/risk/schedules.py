@@ -36,12 +36,24 @@ def generate_market_value_evolution(
 
     for t in tickers:
         final_val_usd = pos_dict[t].market_value
+        qty = pos_dict[t].quantity
         # Historical evolution backwards such that row[-1] == final_val_usd
         mv_usd = final_val_usd * (cum_ret[t] / final_cum[t])
         mv_ars = mv_usd * ccl_rate
 
-        data[f"{t}_USD"] = mv_usd.round(2)
-        data[f"{t}_ARS"] = mv_ars.round(2)
+        # Calculate unit price per share / bond / contract
+        if qty > 0:
+            unit_p_usd = mv_usd / qty
+        else:
+            unit_p_usd = mv_usd
+        unit_p_ars = unit_p_usd * ccl_rate
+
+        # Unambiguous column headers
+        round_digits = 4 if (pos_dict[t].unit_price < 10.0) else 2
+        data[f"{t}_UnitPrice_USD"] = unit_p_usd.round(round_digits)
+        data[f"{t}_UnitPrice_ARS"] = unit_p_ars.round(2)
+        data[f"{t}_TotalVal_USD"] = mv_usd.round(2)
+        data[f"{t}_TotalVal_ARS"] = mv_ars.round(2)
         total_mv_usd += mv_usd
 
     df_mv = pd.DataFrame(data, index=dates)
@@ -74,7 +86,7 @@ def generate_returns_pnl_schedule(
         data[f"{t}_Return(%)"] = ret_pct.round(2)
 
         # Dollar PnL = Market Value Yesterday * Return Today
-        usd_col = f"{t}_USD"
+        usd_col = f"{t}_TotalVal_USD" if f"{t}_TotalVal_USD" in mv_df.columns else f"{t}_USD"
         if usd_col in mv_df.columns:
             prev_mv_usd = mv_df[usd_col].shift(1).fillna(mv_df[usd_col].iloc[0])
             pnl_usd = prev_mv_usd * returns_df[t]

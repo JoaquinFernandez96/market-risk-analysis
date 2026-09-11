@@ -37,11 +37,16 @@ def test_market_value_evolution(test_setup):
     final_ars = df_mv["Portfolio_NAV_ARS"].iloc[-1]
     assert pytest.approx(final_ars, rel=1e-3) == (portfolio.total_value * ccl_rate)
 
-    # Check that individual asset columns exist in dual currencies
+    # Check that individual asset columns exist in dual currencies for both UnitPrice and TotalVal
     for pos in portfolio.positions:
-        assert f"{pos.ticker}_USD" in df_mv.columns
-        assert f"{pos.ticker}_ARS" in df_mv.columns
-        assert pytest.approx(df_mv[f"{pos.ticker}_USD"].iloc[-1], rel=1e-3) == pos.market_value
+        assert f"{pos.ticker}_TotalVal_USD" in df_mv.columns
+        assert f"{pos.ticker}_TotalVal_ARS" in df_mv.columns
+        assert f"{pos.ticker}_UnitPrice_USD" in df_mv.columns
+        assert f"{pos.ticker}_UnitPrice_ARS" in df_mv.columns
+        assert pytest.approx(df_mv[f"{pos.ticker}_TotalVal_USD"].iloc[-1], rel=1e-3) == pos.market_value
+        if pos.quantity > 0:
+            expected_unit_p = pos.market_value / pos.quantity
+            assert pytest.approx(df_mv[f"{pos.ticker}_UnitPrice_USD"].iloc[-1], rel=1e-2) == expected_unit_p
 
 
 def test_returns_pnl_schedule(test_setup):
