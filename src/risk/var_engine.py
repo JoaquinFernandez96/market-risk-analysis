@@ -62,6 +62,15 @@ class VaREngine:
         # Component VaR_i = w_i * Marginal_VaR_i * Total_Value
         component_var = self.weights * marginal_var * self.total_value
 
+        # Standalone VaR sum and Diversification Benefit
+        standalone_vars = [
+            z_score * np.sqrt(horizon_days) * np.sqrt(max(cov_matrix[i, i], 1e-12)) * (self.weights[i] * self.total_value)
+            for i in range(len(self.tickers))
+        ]
+        sum_standalone = float(sum(standalone_vars))
+        div_benefit_dollar = float(max(0.0, sum_standalone - var_dollar))
+        div_benefit_pct = float((div_benefit_dollar / sum_standalone * 100.0) if sum_standalone > 0 else 0.0)
+
         return {
             "var_dollar": round(float(var_dollar), 2),
             "var_pct": round(float(var_pct * 100), 2),
@@ -70,6 +79,9 @@ class VaREngine:
             "daily_vol_pct": round(float(port_vol * 100), 2),
             "annualized_vol_pct": round(float(port_vol * np.sqrt(252) * 100), 2),
             "component_var": component_var,
+            "diversification_benefit_dollar": round(div_benefit_dollar, 2),
+            "diversification_benefit_pct": round(div_benefit_pct, 2),
+            "sum_standalone_var": round(sum_standalone, 2),
         }
 
     def calculate_historical_var(
@@ -245,5 +257,9 @@ class VaREngine:
                 "base_capital_3x": round(base_capital, 2),
                 "stress_capital_3x": round(capital_requirement, 2),
                 "additional_capital_needed": round(additional_stress_capital, 2),
+                "diversification_benefit_dollar": base_param["diversification_benefit_dollar"],
+                "diversification_benefit_pct": base_param["diversification_benefit_pct"],
+                "stress_diversification_benefit_dollar": stress_param["diversification_benefit_dollar"],
+                "stress_diversification_benefit_pct": stress_param["diversification_benefit_pct"],
             }
         }

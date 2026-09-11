@@ -132,6 +132,10 @@ class StressTestEngine:
                     pnl = dv01 * badlar_shift_bps
                     impact_pct = (pnl / pos.market_value) * 100.0
 
+            elif pos.asset_class == AssetClass.CASH:
+                pnl = 0.0
+                impact_pct = 0.0
+
             total_pnl += pnl
             results_by_position.append({
                 "Ticker": pos.ticker,

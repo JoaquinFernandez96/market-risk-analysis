@@ -10,6 +10,7 @@ class AssetClass(str, Enum):
     EQUITY = "Equity"
     BOND = "Sovereign Bond"
     DERIVATIVE = "Derivative"
+    CASH = "Cash & Liquidity"
 
 
 @dataclass
@@ -70,11 +71,39 @@ class Portfolio:
         ).rename(columns={"Ticker": "Count"}).reset_index()
         return grouped
 
+    def scale_to_nav(self, target_nav: float) -> "Portfolio":
+        """Returns a copy of the portfolio scaled to a target NAV,
+        scaling quantities and market values proportionally.
+        """
+        current_nav = self.total_value
+        if current_nav <= 0 or target_nav <= 0:
+            return self
+        ratio = target_nav / current_nav
+        scaled_positions = []
+        for p in self.positions:
+            scaled_p = Position(
+                ticker=p.ticker,
+                name=p.name,
+                asset_class=p.asset_class,
+                quantity=round(p.quantity * ratio, 2) if p.quantity > 10 else round(p.quantity * ratio, 4),
+                unit_price=p.unit_price,
+                market_value=round(p.market_value * ratio, 2),
+                weight=p.weight,
+                currency=p.currency,
+                notional=round(p.notional * ratio, 2) if p.notional else None,
+                details=dict(p.details)
+            )
+            scaled_positions.append(scaled_p)
+        scaled_port = Portfolio(name=f"{self.name} (Scaled to ${target_nav:,.0f})", positions=scaled_positions, base_currency=self.base_currency)
+        scaled_port.update_weights()
+        return scaled_port
 
-def create_default_portfolio() -> Portfolio:
-    """Creates a realistic $10,000,000 USD institutional trading portfolio
 
-    composed of 5 BYMA equities, 5 Argentine sovereign bonds, and 5 derivatives.
+def create_default_portfolio(nav: float = 10_000_000.0) -> Portfolio:
+    """Creates a realistic trading portfolio composed of 5 BYMA equities,
+
+    5 Argentine sovereign bonds, and 5 derivatives (defaults to $10,000,000 USD,
+    can be scaled to any target NAV such as $50,000 for retail).
     """
     positions = [
         # --- 5 BYMA EQUITIES (30% = $3,000,000) ---
@@ -328,4 +357,6 @@ def create_default_portfolio() -> Portfolio:
 
     portfolio = Portfolio(name="Trading Portfolio Argentina", positions=positions)
     portfolio.update_weights()
+    if abs(nav - 10_000_000.0) > 1.0:
+        return portfolio.scale_to_nav(nav)
     return portfolio

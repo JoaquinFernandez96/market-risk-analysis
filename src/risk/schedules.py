@@ -10,7 +10,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-from src.portfolio.models import Portfolio
+from src.portfolio.models import Portfolio, AssetClass
 from src.risk.var_engine import VaREngine
 
 
@@ -35,17 +35,23 @@ def generate_market_value_evolution(
     total_mv_usd = pd.Series(0.0, index=dates)
 
     for t in tickers:
-        final_val_usd = pos_dict[t].market_value
-        qty = pos_dict[t].quantity
-        # Historical evolution backwards such that row[-1] == final_val_usd
-        mv_usd = final_val_usd * (cum_ret[t] / final_cum[t])
-        mv_ars = mv_usd * ccl_rate
+        pos = pos_dict[t]
+        final_val_usd = pos.market_value
+        qty = pos.quantity
+        is_cash = (pos.asset_class == AssetClass.CASH) or ("CASH" in str(pos.asset_class).upper())
 
-        # Calculate unit price per share / bond / contract
-        if qty > 0:
-            unit_p_usd = mv_usd / qty
+        # Historical evolution backwards such that row[-1] == final_val_usd
+        if is_cash:
+            mv_usd = pd.Series(final_val_usd, index=dates)
+            unit_p_usd = pd.Series(1.0, index=dates)
         else:
-            unit_p_usd = mv_usd
+            mv_usd = final_val_usd * (cum_ret[t] / final_cum[t])
+            if qty > 0:
+                unit_p_usd = mv_usd / qty
+            else:
+                unit_p_usd = mv_usd
+
+        mv_ars = mv_usd * ccl_rate
         unit_p_ars = unit_p_usd * ccl_rate
 
         # Unambiguous column headers
@@ -220,6 +226,40 @@ def build_var_supporting_excel(
     # 4. Tail Loss Audits
     base_tail = generate_tail_loss_audit_schedule(var_engine, "base", ccl_rate, confidence_level, horizon_days)
     stress_tail = generate_tail_loss_audit_schedule(var_engine, "stress", ccl_rate, confidence_level, horizon_days)
+
+    # Tab 0: Monthly_Executive_Summary
+    ws_exec = wb.create_sheet(title="Monthly_Executive_Summary")
+    comp_res = var_engine.run_scenario_comparison(confidence_level=confidence_level, horizon_days=horizon_days)
+
+    ws_exec.append(["MONTHLY RISK EXECUTIVE BRIEFING"])
+    ws_exec.append([f"Portfolio Name: {portfolio.name}"])
+    ws_exec.append([f"Total NAV ($ USD): {portfolio.total_value:,.2f}", f"Total NAV ($ ARS): {portfolio.total_value * ccl_rate:,.2f}", f"CCL FX Rate: {ccl_rate:,.2f}"])
+    ws_exec.append([f"Confidence Level: {confidence_level*100:.1f}%", f"Holding Horizon: {horizon_days} Day(s)"])
+    ws_exec.append([])
+
+    ws_exec.append(["KEY RISK METRIC", "BASE REGIME ($ USD)", "BASE REGIME ($ ARS)", "STRESSED REGIME ($ USD)", "STRESSED REGIME ($ ARS)", "% OF NAV"])
+    b_var = comp_res["base"]["historical"]["var_dollar"]
+    s_var = comp_res["stress"]["historical"]["var_dollar"]
+    b_cvar = comp_res["base"]["historical"]["cvar_dollar"]
+    s_cvar = comp_res["stress"]["historical"]["cvar_dollar"]
+    ws_exec.append(["Value at Risk (VaR)", f"{b_var:,.2f}", f"{b_var*ccl_rate:,.2f}", f"{s_var:,.2f}", f"{s_var*ccl_rate:,.2f}", f"{comp_res['base']['historical']['var_pct']:.2f}% (Base) / {comp_res['stress']['historical']['var_pct']:.2f}% (Stress)"])
+    ws_exec.append(["Expected Shortfall (CVaR)", f"{b_cvar:,.2f}", f"{b_cvar*ccl_rate:,.2f}", f"{s_cvar:,.2f}", f"{s_cvar*ccl_rate:,.2f}", f"{comp_res['base']['historical']['cvar_pct']:.2f}% (Base) / {comp_res['stress']['historical']['cvar_pct']:.2f}% (Stress)"])
+    ws_exec.append(["Annualized Volatility", f"{comp_res['base']['portfolio_annual_vol']:.2f}%", "-", f"{comp_res['stress']['portfolio_annual_vol']:.2f}%", "-", "-"])
+    ws_exec.append(["Diversification Benefit", f"{comp_res['comparison']['diversification_benefit_dollar']:,.2f}", f"{comp_res['comparison']['diversification_benefit_dollar']*ccl_rate:,.2f}", f"{comp_res['comparison']['stress_diversification_benefit_dollar']:,.2f}", f"{comp_res['comparison']['stress_diversification_benefit_dollar']*ccl_rate:,.2f}", f"{comp_res['comparison']['diversification_benefit_pct']:.2f}% saved"])
+    ws_exec.append(["Stress Multiplier", f"{comp_res['comparison']['stress_multiplier']:.2f}x", "-", "-", "-", "-"])
+    ws_exec.append([])
+
+    ws_exec.append(["ASSET ALLOCATION SUMMARY"])
+    alloc_summary = portfolio.asset_class_summary()
+    ws_exec.append(list(alloc_summary.columns))
+    for row in alloc_summary.itertuples(index=False):
+        ws_exec.append(list(row))
+    ws_exec.append([])
+
+    ws_exec.append(["TOP RISK DRIVERS (BY COMPONENT VAR)"])
+    ws_exec.append(list(base_comp.columns))
+    for row in base_comp.head(5).itertuples(index=False):
+        ws_exec.append(list(row))
 
     sheets_to_add = [
         ("Base_Market_Values", base_mv.reset_index()),

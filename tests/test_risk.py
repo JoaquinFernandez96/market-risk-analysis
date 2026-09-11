@@ -77,3 +77,26 @@ def test_stress_test_engine(portfolio):
     assert paso_res["total_pnl"] < 0  # Black Monday crash must lead to loss
     assert paso_res["portfolio_return_pct"] < 0
     assert len(paso_res["by_position"]) == 15
+
+
+def test_diversification_benefit(var_engine):
+    """Verify diversification benefit reduces risk below sum of standalone VaRs."""
+    res = var_engine.run_scenario_comparison(confidence_level=0.95, horizon_days=1)
+    div_dollar = res["comparison"]["diversification_benefit_dollar"]
+    div_pct = res["comparison"]["diversification_benefit_pct"]
+
+    assert div_dollar > 0.0
+    assert div_pct > 0.0
+    assert div_pct < 100.0
+
+
+def test_portfolio_scaling(portfolio):
+    """Verify portfolio scaling to retail size ($50,000) preserves weights and proportions."""
+    retail_port = portfolio.scale_to_nav(50_000.0)
+
+    assert pytest.approx(retail_port.total_value, rel=1e-3) == 50_000.0
+    assert len(retail_port.positions) == len(portfolio.positions)
+
+    # Weights must match exactly
+    for orig_p, scaled_p in zip(portfolio.positions, retail_port.positions):
+        assert pytest.approx(orig_p.weight, rel=1e-3) == scaled_p.weight

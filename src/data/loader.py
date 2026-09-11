@@ -174,15 +174,30 @@ class MarketDataLoader:
         n = len(active_tickers)
         # Build specific vol vector and correlation matrix for active_tickers
         vols_list = []
+        is_cash = []
         for t in active_tickers:
-            if t in base_vols:
+            t_upper = t.upper()
+            if any(c in t_upper for c in ["CASH", "CAUCION", "LIQUID", "FCI_MM", "MONEY"]):
+                vols_list.append(0.0001)  # Near-zero volatility for cash/money market
+                is_cash.append(True)
+            elif t in base_vols:
                 vols_list.append(base_vols[t])
-            elif ".BA" in t or "EQUITY" in t.upper():
+                is_cash.append(False)
+            elif any(c in t_upper for c in ["SPY", "QQQ", "AAPL", "NVDA", "MSFT", "AMZN", "MELI", "KO", "TSLA"]):
+                vols_list.append(0.20 * (1.8 if scenario.lower() == "stress" else 1.0))
+                is_cash.append(False)
+            elif any(o in t_upper for o in ["YCA6O", "TLC1O", "IRCFO", "PAMPO", "ON"]):
+                vols_list.append(0.14 * (2.0 if scenario.lower() == "stress" else 1.0))
+                is_cash.append(False)
+            elif ".BA" in t or "EQUITY" in t_upper:
                 vols_list.append(0.42 * (2.1 if scenario.lower() == "stress" else 1.0))
-            elif any(b in t for b in ["GD", "AL", "TX", "AE", "T2V", "BON"]):
+                is_cash.append(False)
+            elif any(b in t_upper for b in ["GD", "AL", "TX", "AE", "T2V", "BON"]):
                 vols_list.append(0.30 * (2.3 if scenario.lower() == "stress" else 1.0))
+                is_cash.append(False)
             else:
                 vols_list.append(0.35 * (2.2 if scenario.lower() == "stress" else 1.0))
+                is_cash.append(False)
 
         daily_vols = np.array([v / np.sqrt(252) for v in vols_list])
 
@@ -192,7 +207,9 @@ class MarketDataLoader:
             for j, t2 in enumerate(active_tickers):
                 if i == j:
                     continue
-                if t1 in ALL_TICKERS and t2 in ALL_TICKERS:
+                if is_cash[i] or is_cash[j]:
+                    corr[i, j] = 0.0
+                elif t1 in ALL_TICKERS and t2 in ALL_TICKERS:
                     idx1 = ALL_TICKERS.index(t1)
                     idx2 = ALL_TICKERS.index(t2)
                     corr[i, j] = base_corr[idx1, idx2]

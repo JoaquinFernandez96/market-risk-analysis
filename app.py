@@ -72,18 +72,29 @@ st.sidebar.image("https://img.icons8.com/fluency/96/bullish.png", width=64)
 st.sidebar.title("Portfolio Settings")
 
 st.sidebar.markdown("### 📁 Monthly Data Source")
-uploaded_file = st.sidebar.file_uploader("Upload Monthly `input.xlsx`", type=["xlsx", "xls"])
+cocos_sample = "COCOS/portfolio_report_20260910.csv"
+has_cocos = os.path.exists(cocos_sample)
+source_options = ["input.xlsx (Standard Template)"]
+if has_cocos:
+    source_options.append("Cocos Capital CSV Statement")
+source_options.append("Upload File (Excel / CSV)")
 
-if uploaded_file is not None:
-    portfolio, settings = load_portfolio_from_excel(uploaded_file)
-    source_label = f"Uploaded `{uploaded_file.name}`"
-elif os.path.exists("input.xlsx"):
+active_source_sel = st.sidebar.selectbox("Select Active Portfolio", source_options, index=0)
+
+if active_source_sel == "Upload File (Excel / CSV)":
+    uploaded_file = st.sidebar.file_uploader("Upload Monthly File (`.xlsx` or `.csv`)", type=["xlsx", "xls", "csv"])
+    if uploaded_file is not None:
+        portfolio, settings = load_portfolio_from_excel(uploaded_file)
+        source_label = f"Uploaded `{uploaded_file.name}`"
+    else:
+        portfolio, settings = load_portfolio_from_excel("input.xlsx")
+        source_label = "Local `input.xlsx` (waiting for upload)"
+elif active_source_sel == "Cocos Capital CSV Statement" and has_cocos:
+    portfolio, settings = load_portfolio_from_excel(cocos_sample)
+    source_label = "Cocos Capital Statement (Sept 2026)"
+else:
     portfolio, settings = load_portfolio_from_excel("input.xlsx")
     source_label = "Local `input.xlsx`"
-else:
-    portfolio = create_default_portfolio()
-    settings = DEFAULT_SETTINGS.copy()
-    source_label = "Default System Portfolio"
 
 st.sidebar.success(f"**Source**: {source_label}\n\n**Cycle**: {settings.get('Reporting_Month', 'Monthly')}")
 
@@ -107,6 +118,35 @@ fx_rate = st.sidebar.number_input("USD/ARS CCL Rate", min_value=500.0, max_value
 curr_view = st.sidebar.radio("Display Currency", ["USD ($)", "ARS ($)"], horizontal=True)
 curr_mult = fx_rate if curr_view == "ARS ($)" else 1.0
 curr_sym = "ARS $" if curr_view == "ARS ($)" else "USD $"
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Dashboard Mode & Sizing")
+dashboard_mode = st.sidebar.radio(
+    "Dashboard View Mode",
+    ["👤 Private / Retail Investor", "🏦 Institutional / Quant Desk"],
+    index=0,
+    help="Switch between intuitive retail takeaways vs institutional Basel II.5 capital metrics and Greeks."
+)
+is_retail = "Retail" in dashboard_mode
+
+scale_choice = st.sidebar.selectbox(
+    "Portfolio Scale / Sizing Preset",
+    ["From Input File (100%)", "Retail Scale ($50,000 USD)", "Private Wealth ($100,000 USD)", "Micro Retail ($10,000 USD)", "Institutional ($10,000,000 USD)"],
+    index=0,
+    help="Scales all holdings proportionally in memory to visualize risk at different portfolio net worths."
+)
+if scale_choice == "Retail Scale ($50,000 USD)":
+    portfolio = portfolio.scale_to_nav(50_000.0)
+    var_engine = VaREngine(portfolio)
+elif scale_choice == "Private Wealth ($100,000 USD)":
+    portfolio = portfolio.scale_to_nav(100_000.0)
+    var_engine = VaREngine(portfolio)
+elif scale_choice == "Micro Retail ($10,000 USD)":
+    portfolio = portfolio.scale_to_nav(10_000.0)
+    var_engine = VaREngine(portfolio)
+elif scale_choice == "Institutional ($10,000,000 USD)":
+    portfolio = portfolio.scale_to_nav(10_000_000.0)
+    var_engine = VaREngine(portfolio)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### VaR Configuration")
@@ -133,11 +173,13 @@ horizon_days = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 num_eq = len(portfolio.get_positions_by_class(AssetClass.EQUITY))
 num_bd = len(portfolio.get_positions_by_class(AssetClass.BOND))
+num_cash = len(portfolio.get_positions_by_class(AssetClass.CASH))
 num_der = len(portfolio.get_positions_by_class(AssetClass.DERIVATIVE))
 st.sidebar.info(
     f"💡 **Active Portfolio Book**: {len(portfolio.positions)} Positions\n\n"
-    f"• **Equities**: {num_eq} positions\n"
-    f"• **Sovereign Debt**: {num_bd} positions\n"
+    f"• **Equities & Cedears**: {num_eq} positions\n"
+    f"• **Bonds & Debt**: {num_bd} positions\n"
+    f"• **Cash & Liquidity**: {num_cash} positions\n"
     f"• **Derivatives**: {num_der} contracts"
 )
 
@@ -145,65 +187,121 @@ st.sidebar.info(
 # --- TOP BANNER METRICS ---
 comparison = var_engine.run_scenario_comparison(confidence_level=conf_level, horizon_days=horizon_days)
 
-st.title("🏛️ Argentine Trading Portfolio - Market Risk Analysis")
+# Component breakdown for top risk identification
+comp_breakdown = var_engine.get_component_var_breakdown(conf_level, horizon_days, scenario="base")
+top_risk_ticker = comp_breakdown.iloc[0]["Ticker"] if not comp_breakdown.empty else "N/A"
+top_risk_pct = comp_breakdown.iloc[0]["% Risk Contribution"] if not comp_breakdown.empty else 0.0
+
+div_benefit_val = comparison["comparison"]["diversification_benefit_dollar"] * curr_mult
+div_benefit_pct = comparison["comparison"]["diversification_benefit_pct"]
+
+st.title(f"{'👤' if is_retail else '🏛️'} Argentine {'Investor' if is_retail else 'Trading'} Portfolio - Market Risk Analysis")
 st.markdown(
-    f"**Live Risk Dashboard** | Institutional Trading Book | Standard Base Regime vs. **Stressed VaR (sVaR)** | Horizon: **{horizon_days}d** | Confidence: **{conf_level*100:.1f}%**"
+    f"**{'Private Investor Dashboard' if is_retail else 'Institutional Trading Desk'}** | Portfolio: **{portfolio.name}** | Base Regime vs. **Stressed VaR (sVaR)** | Horizon: **{horizon_days}d** | Confidence: **{conf_level*100:.1f}%**"
 )
 
 kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-with kpi1:
-    port_val = portfolio.total_value * curr_mult
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Portfolio NAV</div>
-        <div class="metric-value">{curr_sym} {port_val:,.0f}</div>
-        <div class="metric-sub">15 Book Positions</div>
-    </div>
-    """, unsafe_allow_html=True)
 
-with kpi2:
-    base_var = comparison["base"]["historical"]["var_dollar"] * curr_mult
-    base_pct = comparison["base"]["historical"]["var_pct"]
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Base VaR (Hist {conf_level*100:.1f}%)</div>
-        <div class="metric-value">{curr_sym} {base_var:,.0f}</div>
-        <div class="metric-sub">{base_pct:.2f}% of NAV | {horizon_days}d horizon</div>
-    </div>
-    """, unsafe_allow_html=True)
+port_val = portfolio.total_value * curr_mult
+base_var = comparison["base"]["historical"]["var_dollar"] * curr_mult
+base_pct = comparison["base"]["historical"]["var_pct"]
+stress_var = comparison["stress"]["historical"]["var_dollar"] * curr_mult
+stress_pct = comparison["stress"]["historical"]["var_pct"]
 
-with kpi3:
-    stress_var = comparison["stress"]["historical"]["var_dollar"] * curr_mult
-    stress_pct = comparison["stress"]["historical"]["var_pct"]
-    st.markdown(f"""
-    <div class="metric-card-stress">
-        <div class="metric-title">Stressed VaR (sVaR)</div>
-        <div class="metric-value" style="color: #f87171;">{curr_sym} {stress_var:,.0f}</div>
-        <div class="metric-sub" style="color: #fca5a5;">{stress_pct:.2f}% of NAV | Stressed Regime</div>
-    </div>
-    """, unsafe_allow_html=True)
+if is_retail:
+    with kpi1:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">Portfolio Net Worth</div>
+            <div class="metric-value">{curr_sym} {port_val:,.0f}</div>
+            <div class="metric-sub">{len(portfolio.positions)} Active Positions</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-with kpi4:
-    mult = comparison["comparison"]["stress_multiplier"]
-    delta_var = comparison["comparison"]["var_dollar_delta"] * curr_mult
-    st.markdown(f"""
-    <div class="metric-card-stress">
-        <div class="metric-title">Stress Multiplier</div>
-        <div class="metric-value" style="color: #fbbf24;">{mult:.2f}x</div>
-        <div class="metric-sub">+ {curr_sym} {delta_var:,.0f} Capital Add-on</div>
-    </div>
-    """, unsafe_allow_html=True)
+    with kpi2:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">Bad Day Risk ({conf_level*100:.0f}%)</div>
+            <div class="metric-value" style="color: #f87171;">-{curr_sym} {base_var:,.0f}</div>
+            <div class="metric-sub">Max loss in 19 of 20 days ({base_pct:.2f}%)</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-with kpi5:
-    ann_vol_base = comparison["base"]["portfolio_annual_vol"]
-    ann_vol_stress = comparison["stress"]["portfolio_annual_vol"]
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Annualized Volatility</div>
-        <div class="metric-value">{ann_vol_base:.1f}% <span style="font-size:0.9rem; color:#f87171;">➔ {ann_vol_stress:.1f}%</span></div>
-        <div class="metric-sub">Base vs. Stressed Volatility</div>
-    </div>
-    """, unsafe_allow_html=True)
+    with kpi3:
+        st.markdown(f"""
+        <div class="metric-card-stress">
+            <div class="metric-title">Crisis Stress (2019 PASO)</div>
+            <div class="metric-value" style="color: #fbbf24;">-{curr_sym} {stress_var:,.0f}</div>
+            <div class="metric-sub" style="color: #fde68a;">Severe crash loss ({stress_pct:.2f}%)</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with kpi4:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">Top Risk Driver</div>
+            <div class="metric-value" style="color: #60a5fa;">{top_risk_ticker}</div>
+            <div class="metric-sub">{top_risk_pct:.1f}% of total portfolio risk</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with kpi5:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">Diversification Shield</div>
+            <div class="metric-value" style="color: #34d399;">+{curr_sym} {div_benefit_val:,.0f}</div>
+            <div class="metric-sub">{div_benefit_pct:.1f}% risk reduction vs standalone</div>
+        </div>
+        """, unsafe_allow_html=True)
+else:
+    with kpi1:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">Portfolio NAV</div>
+            <div class="metric-value">{curr_sym} {port_val:,.0f}</div>
+            <div class="metric-sub">{len(portfolio.positions)} Book Positions</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with kpi2:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">Base VaR (Hist {conf_level*100:.1f}%)</div>
+            <div class="metric-value">{curr_sym} {base_var:,.0f}</div>
+            <div class="metric-sub">{base_pct:.2f}% of NAV | {horizon_days}d horizon</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with kpi3:
+        st.markdown(f"""
+        <div class="metric-card-stress">
+            <div class="metric-title">Stressed VaR (sVaR)</div>
+            <div class="metric-value" style="color: #f87171;">{curr_sym} {stress_var:,.0f}</div>
+            <div class="metric-sub" style="color: #fca5a5;">{stress_pct:.2f}% of NAV | Stressed Regime</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with kpi4:
+        mult = comparison["comparison"]["stress_multiplier"]
+        delta_var = comparison["comparison"]["var_dollar_delta"] * curr_mult
+        st.markdown(f"""
+        <div class="metric-card-stress">
+            <div class="metric-title">Stress Multiplier</div>
+            <div class="metric-value" style="color: #fbbf24;">{mult:.2f}x</div>
+            <div class="metric-sub">+ {curr_sym} {delta_var:,.0f} Capital Add-on</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with kpi5:
+        ann_vol_base = comparison["base"]["portfolio_annual_vol"]
+        ann_vol_stress = comparison["stress"]["portfolio_annual_vol"]
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">Annualized Volatility</div>
+            <div class="metric-value">{ann_vol_base:.1f}% <span style="font-size:0.9rem; color:#f87171;">➔ {ann_vol_stress:.1f}%</span></div>
+            <div class="metric-sub">Base vs. Stressed Volatility</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -241,6 +339,7 @@ with tab_overview:
             color_discrete_map={
                 AssetClass.EQUITY.value: "#3b82f6",
                 AssetClass.BOND.value: "#10b981",
+                AssetClass.CASH.value: "#8b5cf6",
                 AssetClass.DERIVATIVE.value: "#f59e0b"
             },
             title="Portfolio NAV by Asset Class"
@@ -263,12 +362,54 @@ with tab_overview:
             color_discrete_map={
                 AssetClass.EQUITY.value: "#3b82f6",
                 AssetClass.BOND.value: "#10b981",
+                AssetClass.CASH.value: "#8b5cf6",
                 AssetClass.DERIVATIVE.value: "#f59e0b"
             },
             title="Exposure Weights by Individual Asset (%)"
         )
         fig_bar.update_layout(yaxis=dict(autorange="reversed"), margin=dict(t=40, b=10, l=10, r=10), height=340)
         st.plotly_chart(fig_bar, use_container_width=True)
+
+    # Executive Briefing & Cash Flow Calendar
+    st.markdown("### 📋 Monthly Risk Executive Briefing & Cash Flow Calendar")
+    br_c1, br_c2 = st.columns([1.2, 1])
+    with br_c1:
+        st.markdown(f"""
+        <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid #334155; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+            <div style="font-weight: 600; font-size: 1.05rem; color: #f8fafc; margin-bottom: 8px;">
+                🗣️ Plain-English Risk Takeaways (for Monthly Review)
+            </div>
+            <ul style="color: #cbd5e1; font-size: 0.92rem; line-height: 1.6; margin: 0; padding-left: 20px;">
+                <li><strong>Normal Market Conditions (95% VaR)</strong>: Over a {horizon_days}-day horizon, your portfolio is expected to lose at most <span style="color:#f87171; font-weight:600;">{curr_sym} {base_var:,.0f} ({base_pct:.2f}%)</span> in 19 out of 20 trading days.</li>
+                <li><strong>Severe Argentine Stress Scenario</strong>: In an abrupt macro crisis like the 2019 PASO or sovereign restructuring, your projected loss expands to <span style="color:#fbbf24; font-weight:600;">{curr_sym} {stress_var:,.0f} ({stress_pct:.2f}%)</span>.</li>
+                <li><strong>Risk Concentration Alert</strong>: <strong>{top_risk_ticker}</strong> is your single largest risk driver, accounting for <strong>{top_risk_pct:.1f}%</strong> of total portfolio risk.</li>
+                <li><strong>Diversification Benefit</strong>: Holding this diversified basket across stocks, bonds, and cash saves you <span style="color:#34d399; font-weight:600;">+{curr_sym} {div_benefit_val:,.0f} ({div_benefit_pct:.1f}%)</span> compared to holding each position separately.</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with br_c2:
+        # Cash Flow & Coupon Calendar
+        bonds = portfolio.get_positions_by_class(AssetClass.BOND)
+        cash_pos = portfolio.get_positions_by_class(AssetClass.CASH)
+        tot_bond_annual_usd = sum(p.quantity * p.details.get("coupon", 0.01) for p in bonds)
+        tot_cash_annual_usd = sum(p.market_value * (p.details.get("annual_yield", 0.0) / 100.0) for p in cash_pos)
+        tot_annual_usd = tot_bond_annual_usd + tot_cash_annual_usd
+
+        st.markdown(f"""
+        <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid #334155; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+            <div style="font-weight: 600; font-size: 1.05rem; color: #f8fafc; margin-bottom: 8px;">
+                📅 Upcoming Bond Coupons & Interest Calendar
+            </div>
+            <div style="color: #cbd5e1; font-size: 0.92rem; line-height: 1.6;">
+                • <strong>Next Sovereign Payment Date</strong>: <span style="color: #60a5fa; font-weight:600;">January 9, 2027</span> (GD30, AL30, GD35, AL35, GD38)<br>
+                • <strong>Subsequent Payment Date</strong>: <span style="color: #60a5fa; font-weight:600;">July 9, 2027</span> (Semi-annual coupon & amort)<br>
+                • <strong>Est. Annual Bond Coupons</strong>: <span style="color: #34d399; font-weight:600;">{curr_sym} {tot_bond_annual_usd * curr_mult:,.0f}</span><br>
+                • <strong>Est. Annual Cash/Caución Yield</strong>: <span style="color: #34d399; font-weight:600;">{curr_sym} {tot_cash_annual_usd * curr_mult:,.0f}</span><br>
+                • <strong>Total Passive Income Projected</strong>: <span style="color: #a7f3d0; font-weight:700;">{curr_sym} {tot_annual_usd * curr_mult:,.0f}</span> / year
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     st.markdown("### Detailed Holdings Registry")
     table_df = portfolio.to_dataframe()
@@ -389,6 +530,7 @@ with tab_var:
             color_discrete_map={
                 AssetClass.EQUITY.value: "#3b82f6",
                 AssetClass.BOND.value: "#10b981",
+                AssetClass.CASH.value: "#8b5cf6",
                 AssetClass.DERIVATIVE.value: "#f59e0b"
             }
         )
@@ -407,6 +549,7 @@ with tab_var:
             color_discrete_map={
                 AssetClass.EQUITY.value: "#3b82f6",
                 AssetClass.BOND.value: "#10b981",
+                AssetClass.CASH.value: "#8b5cf6",
                 AssetClass.DERIVATIVE.value: "#f59e0b"
             }
         )
@@ -804,6 +947,7 @@ with tab_stress:
             color_discrete_map={
                 AssetClass.EQUITY.value: "#3b82f6",
                 AssetClass.BOND.value: "#10b981",
+                AssetClass.CASH.value: "#8b5cf6",
                 AssetClass.DERIVATIVE.value: "#f59e0b"
             },
             title="PnL Contribution by Asset Class Under Stress"

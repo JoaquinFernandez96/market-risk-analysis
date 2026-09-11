@@ -98,7 +98,20 @@ def build_template():
         ws_deriv.append(r)
 
     # -------------------------------------------------------------
-    # TAB 4: SETTINGS (Live market baseline parameters)
+    # TAB 4: CASH & LIQUIDITY (Caución, Money Market, Dollar Cash)
+    # -------------------------------------------------------------
+    ws_cash = wb.create_sheet(title="Cash_Liquidity")
+    cash_headers = ["Ticker", "Name", "Type", "Amount_USD", "Amount_ARS", "Annual_Yield_Pct", "Description"]
+    ws_cash.append(cash_headers)
+    cash_rows = [
+        ["CAUCION_ARS", "Caución Bursátil 7D (BYMA)", "Caución Bursátil", 300000.0, 474780000.0, 28.5, "Short term 7-day repo backed by sovereign bonds"],
+        ["CASH_USD", "Dólares Disponibles en Cuenta (MEP/CCL)", "Liquid Cash USD", 200000.0, 316520000.0, 0.0, "Liquid USD cash reserves for opportunistic buying"],
+    ]
+    for r in cash_rows:
+        ws_cash.append(r)
+
+    # -------------------------------------------------------------
+    # TAB 5: SETTINGS (Live market baseline parameters)
     # -------------------------------------------------------------
     ws_set = wb.create_sheet(title="Settings")
     ws_set.append(["Parameter", "Value", "Description"])
