@@ -97,9 +97,23 @@ Your browser will open `http://localhost:8501`.
 - **Tab-by-Tab Presentation Flow**:
   1. **📊 Overview**: Show total portfolio NAV (\$10.0M USD), asset class allocation pie chart, and individual position weights.
   2. **⚡ VaR Analysis (Base vs. Stressed)**: Highlight the **Base VaR** vs. **Stressed VaR (sVaR)** cards, the **Stress Multiplier**, the regulatory capital buffer, and the loss distribution histograms with tail cutoff lines.
-  3. **🏛️ Fixed Income**: Review the sovereign yield curve, portfolio modified duration, and test yield shifts ($\pm 200$ bps) using the parallel shift slider.
-  4. **📈 Derivatives**: Review total USD Delta, options Vega, Theta decay, and the combined collar/put protection payoff curve.
-  5. **🌪️ Stress Testing**: Replay historical Argentine shocks (2019 PASO Black Monday, 2020 Restructuring, 2023 Devaluation) to demonstrate book drawdown resilience.
+  3. **📑 VaR Supporting Schedules**: Inspect the historical market value evolution ($) per asset in dual currencies (USD & ARS), visualize asset trajectories, review the parametric Covariance/Correlation matrices, and click **"📥 Download Supporting Schedules"** to export `var_supporting_schedules.xlsx`.
+  4. **🏛️ Fixed Income**: Review the sovereign yield curve, portfolio modified duration, and test yield shifts ($\pm 200$ bps) using the parallel shift slider.
+  5. **📈 Derivatives**: Review total USD Delta, options Vega, Theta decay, and the combined collar/put protection payoff curve.
+  6. **🌪️ Stress Testing**: Replay historical Argentine shocks (2019 PASO Black Monday, 2020 Restructuring, 2023 Devaluation) to demonstrate book drawdown resilience.
+
+---
+
+## VaR Supporting Schedules & Excel Audit Export
+
+The platform features an audit-ready schedule generator producing a downloadable 6-tab Excel workbook (`var_supporting_schedules.xlsx`):
+
+- **`Base_Market_Values`**: Daily historical market value series per asset and Total Portfolio NAV in parallel **USD ($)** and **ARS ($)** columns.
+- **`Base_Returns_PnL`**: Daily returns (%) and daily dollar PnL ($ USD and $ ARS) for every individual position.
+- **`Stressed_Market_Values`**: Dual-currency daily market value evolution under the stressed crisis regime.
+- **`Stressed_Returns_PnL`**: Stressed daily percentage returns and dollar PnL series.
+- **`Parametric_Risk_Matrix`**: Annualized Covariance Matrix, Correlation Matrix, and Euler Component VaR risk attribution.
+- **`VaR_CVaR_Tail_Audit`**: Ranked empirical tail losses exceeding the VaR threshold, showing the Expected Shortfall (CVaR) calculation step-by-step.
 
 ---
 

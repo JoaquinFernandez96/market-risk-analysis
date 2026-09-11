@@ -12,6 +12,13 @@ from src.pricing.bonds import ArgentineBondPricer
 from src.pricing.derivatives import DerivativesRiskEngine, BlackScholesOption
 from src.risk.var_engine import VaREngine
 from src.risk.stress_testing import StressTestEngine
+from src.risk.schedules import (
+    generate_market_value_evolution,
+    generate_returns_pnl_schedule,
+    generate_parametric_audit_schedules,
+    generate_tail_loss_audit_schedule,
+    build_var_supporting_excel
+)
 
 
 # --- PAGE CONFIGURATION ---
@@ -202,9 +209,10 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 
 # --- MAIN TABS ---
-tab_overview, tab_var, tab_bonds, tab_derivatives, tab_stress, tab_docs = st.tabs([
+tab_overview, tab_var, tab_schedules, tab_bonds, tab_derivatives, tab_stress, tab_docs = st.tabs([
     "📊 Portfolio Overview",
     "⚡ VaR & Expected Shortfall (Base vs Stress)",
+    "📑 VaR Supporting Schedules",
     "🏛️ Fixed Income & Debt Curve",
     "📈 Derivatives & Greeks Matrix",
     "🌪️ Macro Scenario Stress Testing",
@@ -404,6 +412,146 @@ with tab_var:
         )
         fig_c_stress.update_layout(yaxis=dict(autorange="reversed"), height=380, margin=dict(t=20, b=10, l=10, r=10))
         st.plotly_chart(fig_c_stress, use_container_width=True)
+
+
+# ==============================================================================
+# TAB 3: VAR SUPPORTING SCHEDULES & MARKET VALUE EVOLUTION
+# ==============================================================================
+with tab_schedules:
+    st.subheader("📑 VaR Supporting Schedules & Market Value Evolution")
+    st.caption("Audit-ready time-series tracking daily asset market values, returns, dollar PnL, parametric covariance, and empirical tail losses in dual currencies (USD & ARS).")
+
+    # Generate Excel export bytes
+    excel_export_bytes = build_var_supporting_excel(
+        portfolio=portfolio,
+        var_engine=var_engine,
+        ccl_rate=fx_rate,
+        confidence_level=conf_level,
+        horizon_days=horizon_days
+    )
+
+    down_c1, down_c2 = st.columns([1.5, 1])
+    with down_c1:
+        rep_month = str(settings.get('Reporting_Month', 'September_2026')).replace(' ', '_')
+        st.download_button(
+            label="📥 Download Supporting Schedules (var_supporting_schedules.xlsx)",
+            data=excel_export_bytes,
+            file_name=f"var_supporting_schedules_{rep_month}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Download a multi-tab Excel workbook containing Base & Stressed Market Values (USD & ARS), Returns, PnL, Covariance Matrix, and Tail Exceedance schedules."
+        )
+    with down_c2:
+        st.info(f"💡 **Dual-Currency Valuation**: Base FX CCL Rate = **{fx_rate:,.2f} ARS/USD**")
+
+    st.markdown("---")
+
+    # Filter Controls
+    f_c1, f_c2, f_c3 = st.columns([1, 1, 1])
+    with f_c1:
+        schedule_scenario = st.radio("Market Regime", ["Base Scenario", "Stressed Scenario (sVaR)"], horizontal=True)
+        active_scen_key = "stress" if "Stressed" in schedule_scenario else "base"
+    with f_c2:
+        lookback_choice = st.selectbox(
+            "Lookback Window",
+            options=["All History (504 Trading Days / 2Y)", "1 Year (252 Trading Days)", "6 Months (126 Trading Days)"],
+            index=0
+        )
+        lookback_days = 504 if "All" in lookback_choice else (252 if "1 Year" in lookback_choice else 126)
+    with f_c3:
+        chart_curr = st.radio("Chart Currency", ["USD ($)", "ARS ($)"], horizontal=True, index=0 if curr_view == "USD ($)" else 1)
+        curr_suffix = "USD" if chart_curr == "USD ($)" else "ARS"
+        curr_symbol = "$" if chart_curr == "USD ($)" else "ARS $"
+
+    # Generate schedules for active scenario
+    active_returns_df = var_engine.stress_returns_df if active_scen_key == "stress" else var_engine.base_returns_df
+    # Slice to selected lookback
+    sliced_returns = active_returns_df.iloc[-lookback_days:]
+    df_mv_full = generate_market_value_evolution(active_returns_df, portfolio, fx_rate)
+    df_mv = df_mv_full.iloc[-lookback_days:]
+    df_pnl = generate_returns_pnl_schedule(sliced_returns, df_mv, portfolio, fx_rate)
+
+    # 1. Interactive Visual Time-Series Chart
+    st.markdown(f"### Historical Market Value Evolution ({chart_curr})")
+    all_tickers = [p.ticker for p in portfolio.positions]
+    chart_col_options = ["Portfolio NAV"] + all_tickers
+    default_selection = ["Portfolio NAV"] + [t for t in ["GD30", "AL30", "YPFD.BA", "GGAL.BA"] if t in all_tickers]
+    selected_series = st.multiselect(
+        "Select Assets / Portfolios to Visualize:",
+        options=chart_col_options,
+        default=default_selection if default_selection else chart_col_options[:3]
+    )
+
+    if selected_series:
+        fig_mv = go.Figure()
+        for s in selected_series:
+            col_name = f"Portfolio_NAV_{curr_suffix}" if s == "Portfolio NAV" else f"{s}_{curr_suffix}"
+            if col_name in df_mv.columns:
+                is_nav = (s == "Portfolio NAV")
+                fig_mv.add_trace(go.Scatter(
+                    x=df_mv.index,
+                    y=df_mv[col_name],
+                    mode="lines",
+                    name=f"{s} ({curr_symbol})",
+                    line=dict(width=3.5 if is_nav else 1.8, dash="solid" if is_nav else "dot" if ("ROFEX" in s or "IRS" in s) else "solid")
+                ))
+        fig_mv.update_layout(
+            xaxis_title="Date",
+            yaxis_title=f"Market Value ({curr_symbol})",
+            margin=dict(t=30, b=20, l=10, r=10),
+            height=400,
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig_mv, use_container_width=True)
+
+    # 2. Supporting Schedules Sub-Tabs
+    sub_mv, sub_pnl, sub_param, sub_tail = st.tabs([
+        "📈 Market Value Evolution (USD & ARS)",
+        "💰 Daily Returns & Dollar PnL",
+        "📐 Parametric Covariance & Correlation",
+        "🎯 Empirical Tail-Loss Audit"
+    ])
+
+    with sub_mv:
+        st.markdown(f"##### Daily Market Value Table ({schedule_scenario})")
+        st.caption("Normalized historical evolution ending at current portfolio NAV.")
+        display_mv = df_mv.copy()
+        display_mv.index = display_mv.index.strftime("%Y-%m-%d")
+        st.dataframe(display_mv, use_container_width=True)
+
+    with sub_pnl:
+        st.markdown(f"##### Daily Returns & Dollar PnL Schedule ({schedule_scenario})")
+        display_pnl = df_pnl.copy()
+        display_pnl.index = display_pnl.index.strftime("%Y-%m-%d")
+        st.dataframe(display_pnl, use_container_width=True)
+
+    with sub_param:
+        st.markdown(f"##### Parametric Risk Matrices & Component VaR ({schedule_scenario})")
+        cov_df, corr_df, comp_df = generate_parametric_audit_schedules(
+            var_engine, active_scen_key, fx_rate, conf_level, horizon_days
+        )
+        p_c1, p_c2 = st.columns(2)
+        with p_c1:
+            st.markdown("###### Correlation Matrix")
+            fig_corr = px.imshow(
+                corr_df,
+                text_auto=".2f",
+                color_continuous_scale="RdBu_r",
+                zmin=-1, zmax=1,
+                title="Asset Correlation Heatmap"
+            )
+            fig_corr.update_layout(height=420, margin=dict(t=30, b=10, l=10, r=10))
+            st.plotly_chart(fig_corr, use_container_width=True)
+        with p_c2:
+            st.markdown("###### Euler Component VaR Schedule")
+            st.dataframe(comp_df, use_container_width=True, hide_index=True)
+
+    with sub_tail:
+        st.markdown(f"##### Empirical Tail Losses Beyond VaR Cutoff ({schedule_scenario})")
+        tail_df = generate_tail_loss_audit_schedule(
+            var_engine, active_scen_key, fx_rate, conf_level, horizon_days
+        )
+        st.dataframe(tail_df, use_container_width=True, hide_index=True)
 
 
 # ==============================================================================
