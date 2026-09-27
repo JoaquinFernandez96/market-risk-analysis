@@ -4,31 +4,22 @@
 [![Streamlit](https://img.shields.io/badge/streamlit-1.55+-red.svg)](https://streamlit.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-An institutional-grade market risk management system and interactive dashboard for a multi-asset trading portfolio focused on the Argentine financial market. The book is structured with 15 realistic positions spanning **BYMA Equities**, **Argentine Sovereign Restructured Debt**, and **Derivatives (Exchange-Traded & OTC)**.
+An institutional-grade market risk management system and interactive dashboard for multi-asset trading portfolios focused on the Argentine financial market. The platform supports **BYMA Equities & CEDEARs**, **Argentine Sovereign Restructured Debt**, **Money Market / Liquidity**, and **Derivatives (Exchange-Traded & OTC)**.
 
 The platform provides regulatory-grade risk analytics featuring a **Base VaR Scenario** and a **Stressed VaR (sVaR) Scenario** (calibrated to Argentine crisis regimes), Parametric, Historical Simulation, and Monte Carlo VaR models, Expected Shortfall (CVaR), bond duration/convexity analytics, option Greeks, and macroeconomic stress testing.
 
 ---
 
-## Portfolio Structure (\$10,000,000 USD NAV)
+## Portfolio Structure & Asset Classes
 
-| Asset Class | Ticker | Name | Market Value (USD) | Weight (%) | Risk Factors & Characteristics |
-|---|---|---|---|---|---|
-| **Equities** (BYMA) | `YPFD.BA` | YPF S.A. Cl D | \$800,000 | 8.0% | Vaca Muerta oil & gas leader; high liquidity |
-| | `GGAL.BA` | Grupo Financiero Galicia | \$800,000 | 8.0% | Benchmark Argentine banking stock; high beta |
-| | `PAMP.BA` | Pampa Energía S.A. | \$500,000 | 5.0% | Integrated energy & utility |
-| | `BMA.BA` | Banco Macro S.A. | \$500,000 | 5.0% | Commercial banking; monetary sensitivity |
-| | `TXAR.BA` | Ternium Argentina S.A. | \$400,000 | 4.0% | Industrial exporter & steel producer |
-| **Sovereign Debt** | `GD30` | Global USD 2030 (NY Law) | \$1,200,000 | 12.0% | Liquid benchmark restructuring bond; Mod Dur: 2.63 |
-| | `AL30` | Bonar USD 2030 (Local Law) | \$1,200,000 | 12.0% | Benchmark local law bond; Mod Dur: 2.56 |
-| | `GD35` | Global USD 2035 (NY Law) | \$1,000,000 | 10.0% | Intermediate sovereign tenor; Mod Dur: 4.98 |
-| | `AL35` | Bonar USD 2035 (Local Law) | \$800,000 | 8.0% | Local law intermediate tenor; Mod Dur: 4.82 |
-| | `GD38` | Global USD 2038 (NY Law) | \$800,000 | 8.0% | Long-end bond with high convexity (44.8) |
-| **Derivatives** | `ROFEX_DLR_3M` | Rofex USD/ARS 3M Futures | \$450,000 | 4.5% | \$1.5M Notional FX hedge; 1.0 Delta to USD/ARS |
-| | `GGAL_C_ATM` | GGAL 45D ATM Call Option | \$420,000 | 4.2% | Delta: 0.54, Vega: \$980/pt, Gamma: 0.082 |
-| | `GGAL_P_OTM` | GGAL 45D OTM Protective Put | \$280,000 | 2.8% | Delta: -0.28, Downside crash protection |
-| | `USD_ARS_NDF_6M` | OTC USD/ARS 6M NDF | \$450,000 | 4.5% | \$1.2M Notional OTC currency forward |
-| | `BADLAR_IRS_1Y` | OTC BADLAR 1Y Interest Rate Swap| \$400,000 | 4.0% | Pay Fixed / Rec Float; DV01: \$185/bp |
+The platform is designed to model multi-asset books across the primary instruments traded in the Argentine market (BYMA / MAE):
+
+- **BYMA Equities & CEDEARs**: Liquid domestic blue chips (Energy, Banking, Utilities, Materials) and US-listed depositary receipts traded in ARS/USD.
+- **Sovereign Debt (Bonares & Globales)**: Restructured sovereign bonds (e.g. `AL30`, `GD30`, `AL35`, `GD35`) characterized by semi-annual amortizations and step-up coupon profiles.
+- **Money Market & Liquidity**: T+0 Money Market mutual funds (FCIs), cauciones bursátiles, and cash balances acting as risk-dampeners.
+- **Derivatives (Listed & OTC)**: Matba Rofex currency futures, options on liquid stocks, currency forwards (NDFs), and BADLAR interest rate swaps.
+
+All holdings, quantities, prices, and risk factors are dynamically loaded from an editable Excel file ([`input.xlsx`](input.xlsx)) or direct broker statement imports.
 
 ---
 
