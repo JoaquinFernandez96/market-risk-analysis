@@ -68,7 +68,7 @@ def load_portfolio_from_cocos_csv(
     reader = csv.DictReader(lines, delimiter=sep)
     for row in reader:
         r = {k.strip().lower(): str(v).strip() for k, v in row.items() if k}
-        instr = r.get("instrumento", r.get("especie", r.get("ticker", "")))
+        instr = next((r[k] for k in ["instrumento", "especie", "ticker", "activo", "descripcion"] if k in r and r[k]), "")
         if not instr:
             continue
 
@@ -81,10 +81,15 @@ def load_portfolio_from_cocos_csv(
             ticker = instr.strip()
             name = instr.strip()
 
-        qty = parse_argentine_number(r.get("cantidad", 0))
-        price_val = parse_argentine_number(r.get("precio", 0))
-        total_val = parse_argentine_number(r.get("total", 0))
-        moneda = r.get("moneda", "ARS").upper()
+        raw_qty = next((r[k] for k in ["cantidad", "tenencia", "nominales", "posicion"] if k in r), 0)
+        raw_price = next((r[k] for k in ["precio", "cotizacion", "costo", "ultimo_precio"] if k in r), 0)
+        raw_total = next((r[k] for k in ["total", "valuacion", "monto", "importe"] if k in r), 0)
+        raw_moneda = next((r[k] for k in ["moneda", "divisa"] if k in r), "ARS")
+
+        qty = parse_argentine_number(raw_qty)
+        price_val = parse_argentine_number(raw_price)
+        total_val = parse_argentine_number(raw_total)
+        moneda = str(raw_moneda).upper()
 
         if total_val <= 0.0 and qty > 0 and price_val > 0:
             total_val = qty * price_val
@@ -187,6 +192,17 @@ def load_portfolio_from_excel(
         is_csv = True
     elif hasattr(file_source, "name") and str(file_source.name).lower().endswith(".csv"):
         is_csv = True
+    elif isinstance(file_source, io.StringIO):
+        is_csv = True
+        file_source.seek(0)
+    elif isinstance(file_source, io.BytesIO):
+        # Peak at first few bytes to distinguish CSV from ZIP/Excel
+        pos = file_source.tell()
+        sample = file_source.read(8)
+        file_source.seek(pos)
+        # Excel zip files start with PK\x03\x04
+        if sample and not sample.startswith(b"PK"):
+            is_csv = True
 
     if is_csv:
         return load_portfolio_from_cocos_csv(file_source)

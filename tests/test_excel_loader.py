@@ -111,8 +111,25 @@ def test_dynamic_portfolio_with_new_stock():
     assert comp["stress"]["historical"]["var_dollar"] > comp["base"]["historical"]["var_dollar"]
 
 
+def test_load_argentine_broker_csv_synthetic():
+    """Verify loading synthetic Argentine broker CSV statement with semicolon and latin decimals."""
+    synthetic_csv = (
+        "Cuenta;Especie;Tenencia;Precio;Valuacion;Tipo\n"
+        "12345;CEDEAR SPDR S&P 500 (SPY);100;20220,00;2022000,00;CEDEAR\n"
+        "12345;BONO BONAR USD 2030 (AL30D);50;85700,00;42850,00;BONO\n"
+        "12345;FCI COCOS AHORRO CLASE A;1000;1,45;1450,00;FCI\n"
+    )
+    port, settings = load_portfolio_from_excel(io.StringIO(synthetic_csv))
+    assert len(port.positions) == 3
+    assert port.total_value > 0
+    engine = VaREngine(port)
+    comp = engine.run_scenario_comparison(0.95, 1)
+    assert comp["base"]["historical"]["var_dollar"] > 0
+    assert comp["stress"]["historical"]["var_dollar"] > 0
+
+
 def test_load_cocos_capital_csv():
-    """Verify loading real Argentine broker CSV statement from Cocos Capital."""
+    """Verify loading real Argentine broker CSV statement if present locally."""
     csv_path = "COCOS/portfolio_report_20260910.csv"
     import os
     if os.path.exists(csv_path):

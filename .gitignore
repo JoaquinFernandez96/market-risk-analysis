@@ -57,3 +57,26 @@ data/cache/
 ~$*.xlsx
 ~$*.xls
 ~$*.csv
+
+# Private financial statements, broker exports, and personal portfolios
+COCOS/
+cocos/
+[Cc]ocos/
+*cocos*
+*COCOS*
+portfolio_report*
+*portfolio_report*
+input_cocos*
+input_private*
+build_cocos*
+var_supporting_schedules*.xlsx
+
+# Agent local configuration, skills, and rules
+GEMINI.md
+gemini.md
+[Gg][Ee][Mm][Ii][Nn][Ii].[Mm][Dd]
+.gemini/
+.agent/
+.agents/
+_agent/
+_agents/
