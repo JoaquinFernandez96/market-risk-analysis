@@ -139,6 +139,9 @@ cd market-risk-analysis
 
 # Install dependencies
 pip install -r requirements.txt
+
+# (Optional) Install development dependencies for testing
+pip install -r requirements-dev.txt
 ```
 
 ### Launch the Dashboard
@@ -150,7 +153,7 @@ The interactive dashboard will open at `http://localhost:8501`.
 
 ### Running Unit Tests
 ```bash
-pytest -v tests/
+pytest -v
 ```
 
 ---
