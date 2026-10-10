@@ -12,6 +12,13 @@ from src.pricing.bonds import ArgentineBondPricer
 from src.pricing.derivatives import DerivativesRiskEngine, BlackScholesOption
 from src.risk.var_engine import VaREngine
 from src.risk.stress_testing import StressTestEngine
+from src.risk.mpt_optimizer import (
+    MPTOptimizer,
+    MPT_CATEGORY_CORE_CEDEAR,
+    MPT_CATEGORY_HIGH_BETA,
+    MPT_CATEGORY_FIXED_INCOME,
+    MPT_CATEGORY_CASH_FCI,
+)
 from src.risk.schedules import (
     generate_market_value_evolution,
     generate_returns_pnl_schedule,
@@ -75,6 +82,10 @@ st.sidebar.markdown("### 📁 Monthly Data Source")
 source_options = []
 if os.path.exists("input_cocos.xlsx") or os.path.exists("COCOS/input_cocos.xlsx"):
     source_options.append("input_cocos.xlsx (Cocos Capital Portfolio)")
+if os.path.exists("portfolio_report.csv"):
+    source_options.append("portfolio_report.csv (Raw Broker CSV)")
+if os.path.exists("COCOS/portfolio_report.csv"):
+    source_options.append("COCOS/portfolio_report.csv (Raw Broker CSV)")
 if os.path.exists("COCOS/portfolio_report_20260910.csv"):
     source_options.append("COCOS/portfolio_report_20260910.csv (Raw Broker CSV)")
 if os.path.exists("input.xlsx"):
@@ -98,8 +109,9 @@ elif "input_cocos" in active_source_sel:
     portfolio, settings = load_portfolio_from_excel(target)
     source_label = "Cocos Capital Excel (input_cocos.xlsx)"
 elif "CSV" in active_source_sel:
-    portfolio, settings = load_portfolio_from_excel("COCOS/portfolio_report_20260910.csv")
-    source_label = "Cocos Capital CSV Statement"
+    csv_target = active_source_sel.split(" (")[0].strip()
+    portfolio, settings = load_portfolio_from_excel(csv_target)
+    source_label = f"Broker CSV ({csv_target})"
 elif "institutional" in active_source_sel:
     portfolio, settings = load_portfolio_from_excel("input_institutional.xlsx")
     source_label = "Institutional $10M Book"
@@ -130,16 +142,19 @@ st.sidebar.download_button(
     help="Download formatted Excel workbook template to update monthly holdings and parameters."
 )
 
-var_engine = VaREngine(portfolio)
-stress_engine = StressTestEngine(portfolio)
-
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Currency & Valuation")
 default_ccl = float(settings.get("USD_ARS_CCL_Rate", 1280.0))
-fx_rate = st.sidebar.number_input("USD/ARS CCL Rate", min_value=500.0, max_value=5000.0, value=default_ccl, step=10.0)
+fx_rate = st.sidebar.number_input("USD/ARS CCL / MEP Rate", min_value=500.0, max_value=5000.0, value=default_ccl, step=10.0)
+if abs(fx_rate - default_ccl) > 1e-3:
+    portfolio.revalue_with_ccl(fx_rate)
+
 curr_view = st.sidebar.radio("Display Currency", ["USD ($)", "ARS ($)"], horizontal=True)
 curr_mult = fx_rate if curr_view == "ARS ($)" else 1.0
 curr_sym = "ARS $" if curr_view == "ARS ($)" else "USD $"
+
+var_engine = VaREngine(portfolio)
+stress_engine = StressTestEngine(portfolio)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Dashboard Mode & Sizing")
@@ -169,6 +184,23 @@ elif scale_choice == "Micro Retail ($10,000 USD)":
 elif scale_choice == "Institutional ($10,000,000 USD)":
     portfolio = portfolio.scale_to_nav(10_000_000.0)
     var_engine = VaREngine(portfolio)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🎯 MPT & Frontier Settings")
+rf_rate_pct = st.sidebar.slider(
+    "Risk-Free Rate (R_f %)",
+    min_value=0.0,
+    max_value=12.0,
+    value=4.2,
+    step=0.1,
+    help="US 10Y Treasury / Risk-Free Rate benchmark used for Sharpe Ratio and Capital Allocation Line."
+)
+mpt_sidebar_filter = st.sidebar.selectbox(
+    "MPT Asset Universe Filter",
+    options=["All Assets", "CEDEARs Only", "Optimal Allocations"],
+    index=0,
+    help="Filter the MPT Risk-Return Frontier view across all holdings, Equity/CEDEARs only, or optimal Markowitz allocations."
+)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### VaR Configuration")
@@ -329,8 +361,9 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 
 # --- MAIN TABS ---
-tab_overview, tab_var, tab_schedules, tab_bonds, tab_derivatives, tab_stress, tab_docs = st.tabs([
+tab_overview, tab_mpt, tab_var, tab_schedules, tab_bonds, tab_derivatives, tab_stress, tab_docs = st.tabs([
     "📊 Portfolio Overview",
+    "🎯 MPT Risk-Return Frontier",
     "⚡ VaR & Expected Shortfall (Base vs Stress)",
     "📑 VaR Supporting Schedules",
     "🏛️ Fixed Income & Debt Curve",
@@ -445,6 +478,434 @@ with tab_overview:
         use_container_width=True,
         hide_index=True
     )
+
+
+# ==============================================================================
+# TAB 2: MPT RISK & EXPECTED RETURN FRONTIER VISUALIZER
+# ==============================================================================
+with tab_mpt:
+    st.subheader("🎯 Portfolio Risk & Expected Return Frontier Visualizer (Modern Portfolio Theory)")
+    st.caption(
+        "Markowitz mean-variance optimization, Efficient Frontier, Capital Allocation Line (CAL), "
+        "and risk-return attribution across CEDEARs, Fixed Income / Carry, and Money Market FCIs."
+    )
+
+    # Inline Controls & Filters Bar
+    ctrl_c1, ctrl_c2, ctrl_c3, ctrl_c4 = st.columns([1.3, 1.0, 1.0, 0.9])
+    with ctrl_c1:
+        view_options = ["All Assets", "CEDEARs Only", "Optimal Allocations"]
+        default_view_idx = view_options.index(mpt_sidebar_filter) if mpt_sidebar_filter in view_options else 0
+        mpt_view_toggle = st.radio(
+            "Portfolio Universe & View Mode",
+            options=view_options,
+            index=default_view_idx,
+            horizontal=True,
+            help="Filter between all portfolio assets, the Equity/CEDEAR sleeve only, or highlight optimal Markowitz allocations."
+        )
+    with ctrl_c2:
+        rf_inline_pct = st.number_input(
+            "Risk-Free Rate R_f (% p.a.)",
+            min_value=0.0,
+            max_value=15.0,
+            value=float(rf_rate_pct),
+            step=0.1,
+            format="%.2f",
+            help="US 10Y Treasury / Risk-Free Rate benchmark (defaults to ~4.2%)."
+        )
+        rf_decimal = rf_inline_pct / 100.0
+    with ctrl_c3:
+        max_w_cap_pct = st.slider(
+            "Max Single-Asset Weight Cap (%)",
+            min_value=15,
+            max_value=100,
+            value=100,
+            step=5,
+            help="Set to 100% for unconstrained Markowitz optimization, or cap single-asset concentration (e.g. 25%-35%)."
+        )
+        max_w_cap = max_w_cap_pct / 100.0
+    with ctrl_c4:
+        use_live_yf = st.checkbox(
+            "Live yfinance Blend",
+            value=False,
+            help="Fetch trailing 1Y daily adjusted closes from Yahoo Finance for US CEDEAR underlyings and blend with institutional priors."
+        )
+
+    # Build base optimizer and subportfolio if "CEDEARs Only" is selected
+    base_mpt = MPTOptimizer(portfolio, risk_free_rate=rf_decimal, use_yfinance=use_live_yf)
+    active_mpt_portfolio = base_mpt.filter_subportfolio(mpt_view_toggle)
+    mpt_engine = (
+        base_mpt
+        if active_mpt_portfolio is portfolio
+        else MPTOptimizer(active_mpt_portfolio, risk_free_rate=rf_decimal, use_yfinance=use_live_yf)
+    )
+
+    frontier_data = mpt_engine.generate_efficient_frontier(num_points=42, max_weight=max_w_cap)
+    cur_metrics = frontier_data["current"]
+    ms_metrics = frontier_data["max_sharpe"]
+    mv_metrics = frontier_data["min_vol"]
+
+    df_alloc = mpt_engine.get_asset_allocation_dataframe(
+        max_sharpe_res=ms_metrics,
+        min_vol_res=mv_metrics,
+        currency_multiplier=curr_mult,
+    )
+
+    # --- METRICS BAR (st.columns) ---
+    m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+    with m_col1:
+        est_ann_gain = (cur_metrics["expected_return"] * active_mpt_portfolio.total_value) * curr_mult
+        st.metric(
+            "Current Expected Return (μ_p)",
+            f"{cur_metrics['expected_return_pct']:.2f}% p.a.",
+            f"+{curr_sym} {est_ann_gain:,.0f} / yr est.",
+        )
+    with m_col2:
+        vol_diff = cur_metrics["volatility_pct"] - mv_metrics["volatility_pct"]
+        st.metric(
+            "Annualized Volatility (σ_p)",
+            f"{cur_metrics['volatility_pct']:.2f}% p.a.",
+            f"Min Vol Benchmark: {mv_metrics['volatility_pct']:.2f}% ({vol_diff:+.2f}%)",
+            delta_color="off",
+        )
+    with m_col3:
+        st.metric(
+            "Current Sharpe Ratio",
+            f"{cur_metrics['sharpe']:.2f}",
+            f"Excess Return: {cur_metrics['expected_return_pct'] - rf_inline_pct:+.2f}% vs R_f ({rf_inline_pct:.1f}%)",
+            delta_color="off",
+        )
+    with m_col4:
+        sharpe_uplift = ms_metrics["sharpe"] - cur_metrics["sharpe"]
+        st.metric(
+            "Target Max Sharpe (Tangency)",
+            f"{ms_metrics['sharpe']:.2f}",
+            f"{sharpe_uplift:+.2f} uplift (μ={ms_metrics['expected_return_pct']:.1f}%, σ={ms_metrics['volatility_pct']:.1f}%)",
+        )
+
+    st.markdown("---")
+
+    # --- INTERACTIVE PLOTLY BUBBLE / SCATTER & EFFICIENT FRONTIER CHART ---
+    category_colors = {
+        MPT_CATEGORY_CORE_CEDEAR: "#3b82f6",     # Royal Blue
+        MPT_CATEGORY_HIGH_BETA: "#f59e0b",       # Amber / Orange
+        MPT_CATEGORY_FIXED_INCOME: "#10b981",    # Emerald Green
+        MPT_CATEGORY_CASH_FCI: "#a855f7",        # Purple
+    }
+
+    fig_mpt = go.Figure()
+
+    # 1. Capital Allocation Line (CAL)
+    fig_mpt.add_trace(go.Scatter(
+        x=frontier_data["cal_vols_pct"],
+        y=frontier_data["cal_returns_pct"],
+        mode="lines",
+        name=f"Capital Allocation Line (CAL, R_f={rf_inline_pct:.1f}%)",
+        line=dict(color="#fbbf24", width=2.2, dash="dash"),
+        hovertemplate="<b>Capital Allocation Line (CAL)</b><br>Volatility (σ): %{x:.2f}%<br>Expected Return (μ): %{y:.2f}%<extra></extra>",
+    ))
+
+    # 2. Efficient Frontier Curve
+    fig_mpt.add_trace(go.Scatter(
+        x=frontier_data["frontier_vols_pct"],
+        y=frontier_data["frontier_returns_pct"],
+        mode="lines",
+        name="Markowitz Efficient Frontier",
+        line=dict(color="#e2e8f0", width=3.2, dash="solid"),
+        customdata=frontier_data["frontier_sharpes"],
+        hovertemplate=(
+            "<b>Efficient Frontier</b><br>"
+            "Annualized Volatility (σ): %{x:.2f}%<br>"
+            "Expected Return (μ): %{y:.2f}%<br>"
+            "Sharpe Ratio: %{customdata:.2f}<extra></extra>"
+        ),
+    ))
+
+    # 3. Risk-Free Rate Marker at (0, R_f)
+    fig_mpt.add_trace(go.Scatter(
+        x=[0.0],
+        y=[rf_inline_pct],
+        mode="markers+text",
+        name=f"Risk-Free Rate (R_f = {rf_inline_pct:.1f}%)",
+        text=[f"R_f ({rf_inline_pct:.1f}%)"],
+        textposition="middle right",
+        marker=dict(symbol="circle", size=11, color="#fbbf24", line=dict(width=1.5, color="#0f172a")),
+        hovertemplate=f"<b>Risk-Free Rate (US 10Y)</b><br>Volatility: 0.00%<br>Return: {rf_inline_pct:.2f}%<extra></extra>",
+    ))
+
+    # 4. Individual Instrument Bubbles Grouped by Category
+    if not df_alloc.empty:
+        # In 'Optimal Allocations' view, scale bubble size by Max Sharpe weight (or max of Max Sharpe / Min Vol)
+        size_col = (
+            "Max Sharpe Weight (%)"
+            if mpt_view_toggle == "Optimal Allocations"
+            else "Current Weight (%)"
+        )
+        for cat_name in [
+            MPT_CATEGORY_CORE_CEDEAR,
+            MPT_CATEGORY_HIGH_BETA,
+            MPT_CATEGORY_FIXED_INCOME,
+            MPT_CATEGORY_CASH_FCI,
+        ]:
+            sub_df = df_alloc[df_alloc["Category"] == cat_name].copy()
+            if mpt_view_toggle == "Optimal Allocations":
+                # Keep assets with non-trivial weight in Current, Max Sharpe, or Min Vol
+                sub_df = sub_df[
+                    (sub_df["Max Sharpe Weight (%)"] >= 0.5)
+                    | (sub_df["Min Vol Weight (%)"] >= 0.5)
+                    | (sub_df["Current Weight (%)"] >= 1.0)
+                ]
+            if sub_df.empty:
+                continue
+
+            # Dynamic marker diameter scaled by weight w_i
+            weights_for_size = sub_df[size_col].values
+            marker_sizes = np.clip(13.0 + np.sqrt(np.maximum(weights_for_size, 0.2)) * 5.2, 13.0, 50.0)
+
+            custom_hover = np.stack([
+                sub_df["Ticker"].values,
+                sub_df["Name"].values,
+                sub_df["Current Weight (%)"].values,
+                sub_df["Max Sharpe Weight (%)"].values,
+                sub_df["Min Vol Weight (%)"].values,
+                sub_df["Sharpe Ratio"].values,
+                sub_df["Market Value ($)"].values,
+            ], axis=-1)
+
+            fig_mpt.add_trace(go.Scatter(
+                x=sub_df["Annualized Volatility (%)"],
+                y=sub_df["Expected Return (%)"],
+                mode="markers+text",
+                name=cat_name,
+                text=sub_df["Base Ticker"],
+                textposition="top center",
+                textfont=dict(size=11, color="#f8fafc"),
+                marker=dict(
+                    size=marker_sizes,
+                    color=category_colors.get(cat_name, "#60a5fa"),
+                    opacity=0.86,
+                    line=dict(width=1.5, color="#0f172a"),
+                ),
+                customdata=custom_hover,
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b> — %{customdata[1]}<br>"
+                    f"Category: <b>{cat_name}</b><br>"
+                    f"Value: <b>{curr_sym} %{{customdata[6]:,.0f}}</b><br>"
+                    "Current Weight: <b>%{customdata[2]:.2f}%</b><br>"
+                    "Optimal Max Sharpe Weight: <b>%{customdata[3]:.2f}%</b><br>"
+                    "Optimal Min Vol Weight: <b>%{customdata[4]:.2f}%</b><br>"
+                    "Expected Return (μ): <b>%{y:.2f}%</b><br>"
+                    "Annualized Volatility (σ): <b>%{x:.2f}%</b><br>"
+                    "Individual Sharpe Ratio: <b>%{customdata[5]:.2f}</b><extra></extra>"
+                ),
+            ))
+
+    # 5. Highlight Marker: Current Portfolio (Total Holdings)
+    fig_mpt.add_trace(go.Scatter(
+        x=[cur_metrics["volatility_pct"]],
+        y=[cur_metrics["expected_return_pct"]],
+        mode="markers+text",
+        name="Current Portfolio (Total Holdings)",
+        text=["★ Current Portfolio"],
+        textposition="bottom center",
+        textfont=dict(size=12, color="#fde047"),
+        marker=dict(
+            symbol="star",
+            size=24,
+            color="#facc15",
+            line=dict(width=2.2, color="#0f172a"),
+        ),
+        hovertemplate=(
+            "<b>★ Current Portfolio (Total Holdings)</b><br>"
+            "Weight: <b>100.0%</b><br>"
+            f"Expected Return (μ_p): <b>{cur_metrics['expected_return_pct']:.2f}%</b><br>"
+            f"Annualized Volatility (σ_p): <b>{cur_metrics['volatility_pct']:.2f}%</b><br>"
+            f"Portfolio Sharpe Ratio: <b>{cur_metrics['sharpe']:.2f}</b><extra></extra>"
+        ),
+    ))
+
+    # 6. Highlight Marker: Max Sharpe Portfolio (Green Marker + Callout)
+    fig_mpt.add_trace(go.Scatter(
+        x=[ms_metrics["volatility_pct"]],
+        y=[ms_metrics["expected_return_pct"]],
+        mode="markers+text",
+        name="Max Sharpe Portfolio (Tangency)",
+        text=["◆ Max Sharpe"],
+        textposition="top left",
+        textfont=dict(size=12, color="#4ade80"),
+        marker=dict(
+            symbol="diamond",
+            size=19,
+            color="#22c55e",
+            line=dict(width=2.0, color="#052e16"),
+        ),
+        hovertemplate=(
+            "<b>◆ Max Sharpe Portfolio (Tangency)</b><br>"
+            f"Expected Return (μ*): <b>{ms_metrics['expected_return_pct']:.2f}%</b><br>"
+            f"Annualized Volatility (σ*): <b>{ms_metrics['volatility_pct']:.2f}%</b><br>"
+            f"Max Sharpe Ratio: <b>{ms_metrics['sharpe']:.2f}</b><extra></extra>"
+        ),
+    ))
+
+    # 7. Highlight Marker: Min Volatility Portfolio (Blue Marker + Callout)
+    fig_mpt.add_trace(go.Scatter(
+        x=[mv_metrics["volatility_pct"]],
+        y=[mv_metrics["expected_return_pct"]],
+        mode="markers+text",
+        name="Min Volatility Portfolio",
+        text=["● Min Volatility"],
+        textposition="bottom right",
+        textfont=dict(size=12, color="#38bdf8"),
+        marker=dict(
+            symbol="hexagon",
+            size=18,
+            color="#0ea5e9",
+            line=dict(width=2.0, color="#082f49"),
+        ),
+        hovertemplate=(
+            "<b>● Minimum Volatility Portfolio</b><br>"
+            f"Expected Return (μ_min): <b>{mv_metrics['expected_return_pct']:.2f}%</b><br>"
+            f"Annualized Volatility (σ_min): <b>{mv_metrics['volatility_pct']:.2f}%</b><br>"
+            f"Sharpe Ratio: <b>{mv_metrics['sharpe']:.2f}</b><extra></extra>"
+        ),
+    ))
+
+    # Callout annotations for Current, Max Sharpe, and Min Volatility portfolios
+    fig_mpt.add_annotation(
+        x=ms_metrics["volatility_pct"],
+        y=ms_metrics["expected_return_pct"],
+        text=f"<b>Max Sharpe ({ms_metrics['sharpe']:.2f})</b><br>μ={ms_metrics['expected_return_pct']:.1f}% | σ={ms_metrics['volatility_pct']:.1f}%",
+        showarrow=True,
+        arrowhead=2,
+        arrowsize=1,
+        arrowwidth=1.5,
+        arrowcolor="#22c55e",
+        ax=-55,
+        ay=-42,
+        bgcolor="rgba(6, 78, 59, 0.85)",
+        bordercolor="#22c55e",
+        borderwidth=1,
+        font=dict(size=10.5, color="#ecfdf5"),
+    )
+    fig_mpt.add_annotation(
+        x=mv_metrics["volatility_pct"],
+        y=mv_metrics["expected_return_pct"],
+        text=f"<b>Min Vol ({mv_metrics['volatility_pct']:.1f}%)</b><br>μ={mv_metrics['expected_return_pct']:.1f}% | SR={mv_metrics['sharpe']:.2f}",
+        showarrow=True,
+        arrowhead=2,
+        arrowsize=1,
+        arrowwidth=1.5,
+        arrowcolor="#0ea5e9",
+        ax=55,
+        ay=38,
+        bgcolor="rgba(12, 74, 110, 0.85)",
+        bordercolor="#38bdf8",
+        borderwidth=1,
+        font=dict(size=10.5, color="#f0f9ff"),
+    )
+    fig_mpt.add_annotation(
+        x=cur_metrics["volatility_pct"],
+        y=cur_metrics["expected_return_pct"],
+        text=f"<b>Current Holdings</b><br>μ={cur_metrics['expected_return_pct']:.1f}% | σ={cur_metrics['volatility_pct']:.1f}% | SR={cur_metrics['sharpe']:.2f}",
+        showarrow=True,
+        arrowhead=2,
+        arrowsize=1,
+        arrowwidth=1.5,
+        arrowcolor="#facc15",
+        ax=45,
+        ay=-38,
+        bgcolor="rgba(66, 32, 6, 0.88)",
+        bordercolor="#facc15",
+        borderwidth=1,
+        font=dict(size=10.5, color="#fef9c3"),
+    )
+
+    fig_mpt.update_layout(
+        title=f"Risk-Return Efficient Frontier & Asset Positioning ({mpt_view_toggle})",
+        xaxis_title="Annualized Volatility Risk (σ) [%]",
+        yaxis_title="Annualized Expected Return (μ) [%]",
+        height=560,
+        margin=dict(t=50, b=40, l=20, r=20),
+        hovermode="closest",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1.0,
+            font=dict(size=11),
+        ),
+        xaxis=dict(rangemode="tozero", gridcolor="rgba(148, 163, 184, 0.15)"),
+        yaxis=dict(gridcolor="rgba(148, 163, 184, 0.15)"),
+    )
+    st.plotly_chart(fig_mpt, use_container_width=True)
+
+    # --- CURRENT VS OPTIMAL WEIGHTS COMPARISON & ASSET ALLOCATION TABLE ---
+    st.markdown("### 📊 Current vs. Markowitz Optimal Asset Allocations")
+    alloc_c1, alloc_c2 = st.columns([1.05, 1.35])
+
+    with alloc_c1:
+        if not df_alloc.empty:
+            df_melt = df_alloc.melt(
+                id_vars=["Ticker", "Category"],
+                value_vars=["Current Weight (%)", "Max Sharpe Weight (%)", "Min Vol Weight (%)"],
+                var_name="Allocation Strategy",
+                value_name="Weight (%)",
+            )
+            fig_opt_bar = px.bar(
+                df_melt,
+                x="Weight (%)",
+                y="Ticker",
+                color="Allocation Strategy",
+                barmode="group",
+                orientation="h",
+                color_discrete_map={
+                    "Current Weight (%)": "#facc15",
+                    "Max Sharpe Weight (%)": "#22c55e",
+                    "Min Vol Weight (%)": "#38bdf8",
+                },
+                title="Current Weight vs. Max Sharpe & Min Volatility Benchmarks (%)",
+            )
+            fig_opt_bar.update_layout(
+                yaxis=dict(autorange="reversed"),
+                height=440,
+                margin=dict(t=40, b=20, l=10, r=10),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_opt_bar, use_container_width=True)
+
+    with alloc_c2:
+        st.markdown("##### Asset Allocation & Risk-Return Summary Table")
+        if not df_alloc.empty:
+            display_alloc = df_alloc.copy()
+            val_col_label = f"Total Value ({curr_sym.strip()})"
+            display_alloc[val_col_label] = display_alloc["Market Value ($)"].apply(lambda v: f"{curr_sym} {v:,.0f}")
+            display_alloc["Current Weight"] = display_alloc["Current Weight (%)"].apply(lambda w: f"{w:.2f}%")
+            display_alloc["Max Sharpe Weight"] = display_alloc["Max Sharpe Weight (%)"].apply(lambda w: f"{w:.2f}%")
+            display_alloc["Min Vol Weight"] = display_alloc["Min Vol Weight (%)"].apply(lambda w: f"{w:.2f}%")
+            display_alloc["Delta (Max Sharpe)"] = display_alloc["Weight Delta vs Max Sharpe (%)"].apply(lambda d: f"{d:+.2f}%")
+            display_alloc["Exp. Return (μ)"] = display_alloc["Expected Return (%)"].apply(lambda r: f"{r:.2f}%")
+            display_alloc["Volatility (σ)"] = display_alloc["Annualized Volatility (%)"].apply(lambda s: f"{s:.2f}%")
+            display_alloc["Sharpe"] = display_alloc["Sharpe Ratio"].apply(lambda sr: f"{sr:.2f}")
+
+            st.dataframe(
+                display_alloc[[
+                    "Ticker",
+                    "Name",
+                    "Category",
+                    val_col_label,
+                    "Current Weight",
+                    "Max Sharpe Weight",
+                    "Min Vol Weight",
+                    "Delta (Max Sharpe)",
+                    "Exp. Return (μ)",
+                    "Volatility (σ)",
+                    "Sharpe",
+                ]],
+                use_container_width=True,
+                hide_index=True,
+                height=410,
+            )
+
 
 
 # ==============================================================================
@@ -1029,4 +1490,15 @@ with tab_docs:
     - $\\Gamma = \\frac{\\partial^2 V}{\\partial S^2} = \\frac{\\phi(d_1)}{S \\sigma \\sqrt{T}}$
     - $\\mathcal{V} = \\frac{\\partial V}{\\partial \\sigma} = S \\phi(d_1) \\sqrt{T}$
     - $\\Theta = \\frac{\\partial V}{\\partial t}$
+
+    ### 5. Modern Portfolio Theory (MPT) & Markowitz Efficient Frontier
+    - **Portfolio Expected Return & Volatility**:
+      $$\\mu_p = \\mathbf{w}^T \\boldsymbol{\\mu}, \\quad \\sigma_p = \\sqrt{\\mathbf{w}^T \\boldsymbol{\\Sigma} \\mathbf{w}}, \\quad \\text{Sharpe} = \\frac{\\mu_p - R_f}{\\sigma_p}$$
+    - **Maximum Sharpe Ratio (Tangency) Portfolio**:
+      $$\\max_{\\mathbf{w}} \\frac{\\mathbf{w}^T \\boldsymbol{\\mu} - R_f}{\\sqrt{\\mathbf{w}^T \\boldsymbol{\\Sigma} \\mathbf{w}}} \\quad \\text{subject to} \\quad \\sum_{i=1}^N w_i = 1, \\; w_i \\ge 0$$
+    - **Minimum Volatility Portfolio**:
+      $$\\min_{\\mathbf{w}} \\sqrt{\\mathbf{w}^T \\boldsymbol{\\Sigma} \\mathbf{w}} \\quad \\text{subject to} \\quad \\sum_{i=1}^N w_i = 1, \\; w_i \\ge 0$$
+    - **Capital Allocation Line (CAL)**:
+      $$\\mathbb{E}[R_C] = R_f + \\left( \\frac{\\mu^* - R_f}{\\sigma^*} \\right) \\sigma_C$$
     """)
+

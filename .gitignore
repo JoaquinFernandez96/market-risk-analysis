@@ -80,3 +80,7 @@ gemini.md
 .agents/
 _agent/
 _agents/
+
+# Development scratch & unused scripts
+scripts_unused/
+

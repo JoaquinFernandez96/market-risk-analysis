@@ -98,6 +98,35 @@ class Portfolio:
         scaled_port.update_weights()
         return scaled_port
 
+    def revalue_with_ccl(self, ccl_rate: float) -> "Portfolio":
+        """Recomputes USD market values and portfolio weights for multi-currency portfolios
+        when the user adjusts the USD/ARS CCL or MEP exchange rate.
+        Positions denominated in USD remain fixed in USD, while ARS-denominated positions
+        scale according to raw_total_ars / ccl_rate.
+        """
+        if ccl_rate <= 0:
+            return self
+        has_ars_raw = any(
+            p.details.get("raw_total_ars") is not None and p.details.get("raw_total_ars", 0) > 0
+            for p in self.positions
+        )
+        if not has_ars_raw:
+            return self
+
+        for p in self.positions:
+            raw_ars = p.details.get("raw_total_ars")
+            moneda = str(p.details.get("moneda", "USD")).upper()
+            if raw_ars is not None and raw_ars > 0 and moneda not in ("USD", "EXT", "U$S", "US$", "DOLAR", "DÓLAR"):
+                new_mv_usd = float(raw_ars) / float(ccl_rate)
+                p.market_value = round(new_mv_usd, 2)
+                if p.asset_class == AssetClass.CASH and p.ticker.startswith("CASH_"):
+                    p.quantity = round(new_mv_usd, 2)
+                    p.unit_price = 1.0
+                elif p.quantity > 0:
+                    p.unit_price = new_mv_usd / p.quantity
+        self.update_weights()
+        return self
+
 
 def create_default_portfolio(nav: float = 10_000_000.0) -> Portfolio:
     """Creates a realistic trading portfolio composed of 5 BYMA equities,

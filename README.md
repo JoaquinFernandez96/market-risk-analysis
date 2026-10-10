@@ -57,6 +57,11 @@ Pre-configured historical crisis replays and interactive factor sliders:
 - **2023 Post-Primary Devaluation**: Sudden currency jump with equity inflation hedge.
 - **Global Emerging Market Stagflation**: Contraction in EM flows and US rate hike.
 
+### 6. Modern Portfolio Theory (MPT) & Markowitz Efficient Frontier
+- **Multi-Asset Return & Volatility Modeling**: Models annualized expected returns ($\mu_i$), volatilities ($\sigma_i$), and positive-definite covariance matrices ($\boldsymbol{\Sigma}$) across **Core CEDEARs**, **High-Beta CEDEARs**, **Fixed Income / Carry** (Boncaps, Lecaps, Sovereign Bonds), and **Money Market FCIs**, with optional live `yfinance` blending.
+- **Markowitz Optimization (`scipy.optimize.minimize`)**: Computes the **Maximum Sharpe Ratio (Tangency) Portfolio** and **Global Minimum Volatility Portfolio** subject to long-only allocation constraints ($\sum w_i = 1, w_i \ge 0$).
+- **Interactive Frontier & Capital Allocation Line (CAL)**: Plots weight-scaled instrument bubbles against the Efficient Frontier boundary and the tangent CAL originating from the configurable Risk-Free Rate ($R_f$).
+
 ---
 
 ## User Guide: Monthly Risk Presentation Walkthrough
@@ -82,16 +87,17 @@ Your browser will open `http://localhost:8501`.
 
 ### 3. How to Present to Stakeholders
 - **Sidebar Controls**:
-  - **Live Excel Uploader**: You can upload a new `input.xlsx` file directly in the browser during a meeting without restarting the application.
-  - **Currency Toggle**: Switch instantaneously between **USD ($)** and **ARS ($)** using the live CCL exchange rate.
-  - **Regulatory Confidence & Horizon**: Switch between **95% 1-Day** (internal risk limit) and **99% 10-Day** (Basel regulatory capital standard).
+  - **Live Excel / CSV Uploader**: You can upload a new `input.xlsx` or broker `portfolio_report.csv` file directly in the browser during a meeting without restarting the application.
+  - **Currency Toggle**: Switch instantaneously between **USD ($)** and **ARS ($)** using the live CCL/MEP exchange rate.
+  - **MPT & VaR Controls**: Adjust the Risk-Free Rate ($R_f$), filter asset universes (`All Assets`, `CEDEARs Only`, `Optimal Allocations`), and switch between **95% 1-Day** and **99% 10-Day** VaR horizons.
 - **Tab-by-Tab Presentation Flow**:
-  1. **📊 Overview**: Show total portfolio NAV (\$10.0M USD), asset class allocation pie chart, and individual position weights.
-  2. **⚡ VaR Analysis (Base vs. Stressed)**: Highlight the **Base VaR** vs. **Stressed VaR (sVaR)** cards, the **Stress Multiplier**, the regulatory capital buffer, and the loss distribution histograms with tail cutoff lines.
-  3. **📑 VaR Supporting Schedules**: Inspect the historical market value evolution ($) per asset in dual currencies (USD & ARS), visualize asset trajectories, review the parametric Covariance/Correlation matrices, and click **"📥 Download Supporting Schedules"** to export `var_supporting_schedules.xlsx`.
-  4. **🏛️ Fixed Income**: Review the sovereign yield curve, portfolio modified duration, and test yield shifts ($\pm 200$ bps) using the parallel shift slider.
-  5. **📈 Derivatives**: Review total USD Delta, options Vega, Theta decay, and the combined collar/put protection payoff curve.
-  6. **🌪️ Stress Testing**: Replay historical Argentine shocks (2019 PASO Black Monday, 2020 Restructuring, 2023 Devaluation) to demonstrate book drawdown resilience.
+  1. **📊 Portfolio Overview**: Show total portfolio NAV, asset class allocation pie chart, and individual position weights.
+  2. **🎯 MPT Risk-Return Frontier**: Inspect the portfolio's position relative to the Markowitz Efficient Frontier and Capital Allocation Line (CAL), compare Current Sharpe vs. Target Max Sharpe, and review optimal weight rebalancing.
+  3. **⚡ VaR Analysis (Base vs. Stressed)**: Highlight the **Base VaR** vs. **Stressed VaR (sVaR)** cards, the **Stress Multiplier**, the regulatory capital buffer, and the loss distribution histograms with tail cutoff lines.
+  4. **📑 VaR Supporting Schedules**: Inspect the historical market value evolution ($) per asset in dual currencies (USD & ARS), visualize asset trajectories, review the parametric Covariance/Correlation matrices, and click **"📥 Download Supporting Schedules"** to export `var_supporting_schedules.xlsx`.
+  5. **🏛️ Fixed Income**: Review the sovereign yield curve, portfolio modified duration, and test yield shifts ($\pm 200$ bps) using the parallel shift slider.
+  6. **📈 Derivatives**: Review total USD Delta, options Vega, Theta decay, and the combined collar/put protection payoff curve.
+  7. **🌪️ Stress Testing**: Replay historical Argentine shocks (2019 PASO Black Monday, 2020 Restructuring, 2023 Devaluation) to demonstrate book drawdown resilience.
 
 ---
 
@@ -120,7 +126,7 @@ The system is fully modular and allows risk managers to update holdings, prices,
 
 ### Updating Workflow
 - Edit `input.xlsx` in Excel and save. The dashboard will automatically read the updated holdings upon reload.
-- Alternatively, upload any `.xlsx` file directly into the **Sidebar File Uploader** during monthly presentations without restarting the application.
+- Alternatively, upload any `.xlsx` or broker `.csv` file directly into the **Sidebar File Uploader** during monthly presentations without restarting the application.
 - Click **"📥 Download Template (input.xlsx)"** in the sidebar to export the working format.
 
 ---
@@ -163,14 +169,16 @@ pytest -v
 market-risk-analysis/
 ├── app.py                      # Interactive Streamlit dashboard
 ├── input.xlsx                  # Master Excel workbook for monthly updates
+├── input_institutional.xlsx    # Institutional $10M trading book preset
 ├── create_template_excel.py    # Generator script for master input workbook
-├── requirements.txt            # Python dependencies
+├── requirements.txt            # Runtime Python dependencies
+├── requirements-dev.txt        # Developer & test suite dependencies
 ├── README.md                   # System documentation & math formulation
-├── .gitignore                  # Git exclusions
+├── .gitignore                  # Git exclusions & financial data privacy rules
 ├── src/
 │   ├── portfolio/
 │   │   ├── models.py           # Portfolio & Position data models
-│   │   ├── excel_loader.py     # Parser for input.xlsx workbooks & buffers
+│   │   ├── excel_loader.py     # Parser for input.xlsx workbooks & broker CSVs
 │   │   └── __init__.py
 │   ├── pricing/
 │   │   ├── bonds.py            # Argentine sovereign debt pricer & duration
@@ -180,16 +188,21 @@ market-risk-analysis/
 │   │   ├── loader.py           # Base & Stressed market return generators
 │   │   └── __init__.py
 │   └── risk/
+│       ├── mpt_optimizer.py    # Modern Portfolio Theory & Markowitz optimizer
 │       ├── var_engine.py       # Base vs Stressed VaR, CVaR, Component VaR
+│       ├── schedules.py        # Audit-ready time-series & Excel schedule builder
 │       ├── stress_testing.py   # Historical crisis scenarios & factor shocks
 │       └── __init__.py
 └── tests/
-    ├── test_excel_loader.py    # Unit tests for Excel workbook loading & dynamic assets
+    ├── test_excel_loader.py    # Unit tests for Excel/CSV loading & dynamic assets
+    ├── test_mpt_optimizer.py   # Unit tests for MPT engine & Markowitz frontier
     ├── test_pricing.py         # Unit tests for bonds, options, and Greeks
-    └── test_risk.py            # Unit tests for VaR, CVaR, and stress engine
+    ├── test_risk.py            # Unit tests for VaR, CVaR, and stress engine
+    └── test_schedules.py       # Unit tests for VaR supporting schedules
 ```
 
 ---
 
 ## License
 MIT License. Developed for quantitative market risk analysis.
+

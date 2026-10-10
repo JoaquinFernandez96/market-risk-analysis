@@ -23,14 +23,25 @@ DEFAULT_SETTINGS = {
 
 
 def parse_argentine_number(val) -> float:
-    """Parses Argentine decimal/thousand format (e.g. 1.192.531,88 or 1455,3 or 100)."""
+    """Parses Argentine/European decimal/thousand format (e.g. 1.192.531,88 or 1.289,50)
+    and strips non-numeric currency/percentage artifacts.
+    """
+    import re
     if pd.isna(val):
         return 0.0
     if isinstance(val, (int, float)):
         return float(val)
     s = str(val).strip()
+    # Strip non-numeric artifacts (currency symbols, spaces, letters) keeping digits, '.', ',', '-', '+'
+    s = re.sub(r"[^\d\.,\-+]", "", s)
+    if not s or s in ("-", "+", ".", ","):
+        return 0.0
     if "." in s and "," in s:
-        s = s.replace(".", "").replace(",", ".")
+        # Determine whether ',' or '.' is the decimal separator (last separator wins)
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
     elif "," in s:
         s = s.replace(",", ".")
     try:
@@ -43,8 +54,9 @@ def load_portfolio_from_cocos_csv(
     file_source: Union[str, io.BytesIO],
     ccl_rate: float = 1582.60
 ) -> Tuple[Portfolio, Dict[str, Any]]:
-    """Parses standard Argentine broker export CSVs (such as Cocos Capital).
-    Extracts Tickers, Quantities, Prices, and maps them to Equities, Bonds, and Cash.
+    """Parses standard Argentine broker export CSVs (such as Cocos Capital portfolio_report.csv).
+    Extracts Tickers, Quantities, Prices, handles multi-currency FX conversions (ARS/USD/EXT),
+    filters micro-cash dust balances, and maps instruments to Equities, Bonds, and Cash/FCIs.
     """
     import re
     import csv
@@ -57,6 +69,8 @@ def load_portfolio_from_cocos_csv(
         with open(file_source, "r", encoding="utf-8-sig", errors="ignore") as f:
             lines = f.readlines()
     else:
+        if hasattr(file_source, "seek"):
+            file_source.seek(0)
         content = file_source.read()
         if isinstance(content, bytes):
             content = content.decode("utf-8-sig", errors="ignore")
@@ -89,40 +103,52 @@ def load_portfolio_from_cocos_csv(
         qty = parse_argentine_number(raw_qty)
         price_val = parse_argentine_number(raw_price)
         total_val = parse_argentine_number(raw_total)
-        moneda = str(raw_moneda).upper()
+        moneda = str(raw_moneda).strip().upper()
 
         if total_val <= 0.0 and qty > 0 and price_val > 0:
             total_val = qty * price_val
 
-        # Convert to USD
-        if moneda == "USD":
+        # Convert to USD using CCL / MEP FX rate for ARS-denominated rows
+        is_usd_ccy = moneda in ("USD", "EXT", "U$S", "US$", "DOLAR", "DÓLAR")
+        if is_usd_ccy:
             mkt_val_usd = total_val
-            unit_price_usd = price_val
+            unit_price_usd = (mkt_val_usd / qty) if (qty > 0 and total_val > 0) else price_val
         else:
             mkt_val_usd = total_val / ccl_rate
-            unit_price_usd = price_val / ccl_rate
-
-        if mkt_val_usd < 0.5:
-            # Skip dust (e.g. 0,01 ARS)
-            continue
+            unit_price_usd = (mkt_val_usd / qty) if (qty > 0 and total_val > 0) else (price_val / ccl_rate)
 
         instr_upper = instr.upper()
         ticker_upper = ticker.upper()
+        is_raw_cash_row = ticker_upper in ("ARS", "USD", "EXT", "PESOS", "DOLARES", "DÓLARES")
 
-        if any(c in ticker_upper for c in ["ARS", "USD", "EXT", "CAUCION"]) or "FCI" in instr_upper:
+        # Filter out dust or micro-cash balances (e.g. residual ARS/EXT/USD cash rows)
+        if mkt_val_usd < 0.5 or (is_raw_cash_row and mkt_val_usd < 5.0):
+            continue
+
+        if (
+            is_raw_cash_row
+            or any(c in ticker_upper for c in ["ARS", "USD", "EXT", "CAUCION", "COCOS", "FCI", "MM", "FBA", "SBS"])
+            or any(c in instr_upper for c in ["FCI", "FONDO", "MONEY MARKET", "AHORRO", "CAUCION", "LIQUIDEZ"])
+        ):
             asset_class = AssetClass.CASH
-            c_type = "Money Market FCI" if "FCI" in instr_upper else "Liquid Cash"
+            c_type = "Money Market FCI" if ("FCI" in instr_upper or "COCOS" in ticker_upper or "FONDO" in instr_upper) else "Liquid Cash"
             pos = Position(
-                ticker=f"CASH_{ticker}" if ticker in ["ARS", "USD", "EXT"] else ticker,
+                ticker=f"CASH_{ticker_upper}" if is_raw_cash_row else ticker,
                 name=name or ticker,
                 asset_class=asset_class,
-                quantity=mkt_val_usd,
-                unit_price=1.0,
+                quantity=mkt_val_usd if is_raw_cash_row else (qty if qty > 0 else mkt_val_usd),
+                unit_price=1.0 if is_raw_cash_row else unit_price_usd,
                 market_value=round(mkt_val_usd, 2),
                 currency="USD",
-                details={"type": c_type, "moneda": moneda, "total_ars": total_val if moneda == "ARS" else total_val * ccl_rate}
+                details={
+                    "type": c_type,
+                    "moneda": moneda,
+                    "total_ars": total_val if not is_usd_ccy else total_val * ccl_rate,
+                    "raw_total_ars": total_val if not is_usd_ccy else None,
+                    "annual_yield": 4.5 if is_usd_ccy else 4.8,
+                }
             )
-        elif any(b in instr_upper for b in ["BONO", "LETRA", "LECAP", "BONCAP", "DEUDA", "STEP UP"]) or any(b in ticker_upper for b in ["AL", "GD", "T15", "T31", "TX", "BOP"]):
+        elif any(b in instr_upper for b in ["BONO", "LETRA", "LECAP", "BONCAP", "DEUDA", "STEP UP"]) or any(b in ticker_upper for b in ["AL", "GD", "T15", "T31", "TX", "BOP", "S31", "S14", "AE38"]):
             asset_class = AssetClass.BOND
             try:
                 metrics = ArgentineBondPricer.calculate_risk_metrics(ticker, market_price=unit_price_usd*100)
@@ -131,10 +157,10 @@ def load_portfolio_from_cocos_csv(
                 dv01 = metrics["dv01_per_100"]
                 ytm = metrics["ytm_percent"] / 100.0
             except Exception:
-                mod_dur = 2.5
-                convexity = 8.0
-                dv01 = 280.0
-                ytm = 0.16
+                mod_dur = 1.8 if any(k in ticker_upper for k in ["T15", "T31", "S31", "S14"]) else 2.5
+                convexity = 5.0 if any(k in ticker_upper for k in ["T15", "T31", "S31", "S14"]) else 8.0
+                dv01 = 200.0
+                ytm = 0.145 if any(k in ticker_upper for k in ["T15", "T31", "S31", "S14"]) else 0.16
 
             pos = Position(
                 ticker=ticker,
@@ -145,12 +171,14 @@ def load_portfolio_from_cocos_csv(
                 market_value=round(mkt_val_usd, 2),
                 currency="USD",
                 details={
-                    "law": "Argentina" if ("AL" in ticker or "T" in ticker) else "New York",
+                    "law": "Argentina" if ("AL" in ticker_upper or "T" in ticker_upper or "S" in ticker_upper) else "New York",
                     "ytm": ytm,
                     "modified_duration": mod_dur,
                     "convexity": convexity,
                     "dv01": dv01,
-                    "coupon": 0.0075 if ("30" in ticker) else 0.036
+                    "coupon": 0.0075 if ("30" in ticker_upper) else 0.036,
+                    "moneda": moneda,
+                    "raw_total_ars": total_val if not is_usd_ccy else None,
                 }
             )
         else:
@@ -165,7 +193,11 @@ def load_portfolio_from_cocos_csv(
                 unit_price=unit_price_usd,
                 market_value=round(mkt_val_usd, 2),
                 currency="USD",
-                details={"sector": "Cedear US / Equities" if "CEDEAR" in instr_upper else "BYMA Equity"}
+                details={
+                    "sector": "Cedear US / Equities" if "CEDEAR" in instr_upper else "BYMA Equity",
+                    "moneda": moneda,
+                    "raw_total_ars": total_val if not is_usd_ccy else None,
+                }
             )
 
         positions.append(pos)
@@ -179,11 +211,13 @@ def load_portfolio_from_cocos_csv(
 
 
 def load_portfolio_from_excel(
-    file_source: Union[str, io.BytesIO] = "input.xlsx"
+    file_source: Union[str, io.BytesIO] = "input.xlsx",
+    ccl_rate: float = None
 ) -> Tuple[Portfolio, Dict[str, Any]]:
     """Loads and validates a trading portfolio from an Excel spreadsheet or broker CSV.
 
     :param file_source: Filepath or BytesIO buffer from Streamlit file_uploader
+    :param ccl_rate: Optional USD/ARS CCL or MEP exchange rate override for CSV parsing
     :return: (Portfolio object, settings dict)
     """
     # Check if CSV file or buffer
@@ -205,7 +239,8 @@ def load_portfolio_from_excel(
             is_csv = True
 
     if is_csv:
-        return load_portfolio_from_cocos_csv(file_source)
+        eff_ccl = float(ccl_rate) if (ccl_rate is not None and ccl_rate > 0) else 1582.60
+        return load_portfolio_from_cocos_csv(file_source, ccl_rate=eff_ccl)
 
     if isinstance(file_source, str) and not os.path.exists(file_source):
         print(f"Warning: {file_source} not found. Falling back to default portfolio.")
