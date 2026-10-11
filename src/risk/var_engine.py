@@ -17,21 +17,37 @@ from src.data.loader import MarketDataLoader, ALL_TICKERS
 class VaREngine:
     """Quantitative engine for Base and Stressed VaR and Expected Shortfall."""
 
-    def __init__(self, portfolio: Portfolio):
+    def __init__(
+        self,
+        portfolio: Portfolio,
+        use_live_cache: bool = False,
+        force_refresh: bool = False,
+    ):
         self.portfolio = portfolio
         self.portfolio.update_weights()
         self.total_value = self.portfolio.total_value
+        self.use_live_cache = use_live_cache
 
         # Dynamic list of active tickers from portfolio
         self.tickers = [p.ticker for p in self.portfolio.positions]
         self.weights = np.array([p.weight for p in self.portfolio.positions])
 
-        # Preload base and stress simulated historical return datasets for active tickers
+        # Load base and stress return datasets (backed by persistent local disk cache when enabled)
         self.base_returns_df = MarketDataLoader.generate_simulated_returns(
-            scenario="base", tickers=self.tickers, num_days=504, seed=42
+            scenario="base",
+            tickers=self.tickers,
+            num_days=504,
+            seed=42,
+            use_live_cache=use_live_cache,
+            force_refresh=force_refresh,
         )
         self.stress_returns_df = MarketDataLoader.generate_simulated_returns(
-            scenario="stress", tickers=self.tickers, num_days=504, seed=101
+            scenario="stress",
+            tickers=self.tickers,
+            num_days=504,
+            seed=101,
+            use_live_cache=use_live_cache,
+            force_refresh=False,
         )
 
     def calculate_parametric_var(

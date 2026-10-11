@@ -58,9 +58,14 @@ Pre-configured historical crisis replays and interactive factor sliders:
 - **Global Emerging Market Stagflation**: Contraction in EM flows and US rate hike.
 
 ### 6. Modern Portfolio Theory (MPT) & Markowitz Efficient Frontier
-- **Multi-Asset Return & Volatility Modeling**: Models annualized expected returns ($\mu_i$), volatilities ($\sigma_i$), and positive-definite covariance matrices ($\boldsymbol{\Sigma}$) across **Core CEDEARs**, **High-Beta CEDEARs**, **Fixed Income / Carry** (Boncaps, Lecaps, Sovereign Bonds), and **Money Market FCIs**, with optional live `yfinance` blending.
+- **Multi-Asset Return & Volatility Modeling**: Models annualized expected returns ($\mu_i$), volatilities ($\sigma_i$), and positive-definite covariance matrices ($\boldsymbol{\Sigma}$) across **Core CEDEARs**, **High-Beta CEDEARs**, **Fixed Income / Carry** (Boncaps, Lecaps, Sovereign Bonds), and **Money Market FCIs**, backed by the persistent local `yfinance` disk cache.
 - **Markowitz Optimization (`scipy.optimize.minimize`)**: Computes the **Maximum Sharpe Ratio (Tangency) Portfolio** and **Global Minimum Volatility Portfolio** subject to long-only allocation constraints ($\sum w_i = 1, w_i \ge 0$).
 - **Interactive Frontier & Capital Allocation Line (CAL)**: Plots weight-scaled instrument bubbles against the Efficient Frontier boundary and the tangent CAL originating from the configurable Risk-Free Rate ($R_f$).
+
+### 7. Persistent Local Market Data Cache (`yfinance` + Granular Fallback)
+- **Daily TTL & Zero-Redundancy Sync (`data/cache/market_returns_cache.csv`)**: Stores 504 trading days of split- and dividend-adjusted daily returns locally on disk (git-ignored). Subsequent launches on the same day make **0 API calls**, and adding a new stock triggers a **delta-only fetch** for that single ticker.
+- **Revision-Safe Full-Window Overwrite (`period="2y", auto_adjust=True`)**: Overwrites the full 2-year column per refreshed ticker in a single batched request so retroactive stock splits, dividends, and exchange price revisions never introduce boundary crash seams.
+- **Granular Per-Ticker Priors**: Non-Yahoo local instruments (Boncaps, Lecaps, Sovereign Debt, Money Market FCIs, OTC Derivatives) and offline runs use calibrated per-ticker volatilities and category-aware correlations.
 
 ---
 

@@ -267,38 +267,30 @@ class MPTOptimizer:
         self.cov_matrix = np.outer(self.sigma, self.sigma) * self.corr_matrix
 
     def _enrich_with_yfinance(self) -> None:
-        """Optionally fetches rolling daily adjusted closes via yfinance for US CEDEAR underlyings
-        and blends empirical volatility/returns with institutional priors.
+        """Fetches rolling daily adjusted returns via the persistent local disk cache
+        (`MarketDataLoader.sync_local_cache`) and blends empirical volatility/returns with institutional priors.
         """
-        cedear_indices = [
-            i for i, m in enumerate(self.asset_Meta)
-            if m["category"] in (MPT_CATEGORY_CORE_CEDEAR, MPT_CATEGORY_HIGH_BETA)
-            and m["base_ticker"].isalpha()
-        ]
-        if not cedear_indices:
-            return
+        from src.data.loader import MarketDataLoader
 
-        yf_tickers = list({self.asset_Meta[i]["base_ticker"] for i in cedear_indices})
         try:
-            raw = yf.download(yf_tickers, period=self.lookback_period, progress=False, auto_adjust=True)
-            if raw.empty:
+            cached_df, _ = MarketDataLoader.sync_local_cache(self.tickers)
+            if cached_df.empty:
                 return
-            close_df = raw["Close"] if "Close" in raw else raw
-            if isinstance(close_df, pd.Series):
-                close_df = close_df.to_frame(name=yf_tickers[0])
-            ret_df = close_df.pct_change().dropna(how="all")
+
+            lookback_days = 252 if self.lookback_period == "1y" else 504
+            ret_df = cached_df.tail(lookback_days)
             if len(ret_df) < 40:
                 return
 
-            for idx in cedear_indices:
-                bt = self.asset_Meta[idx]["base_ticker"]
-                if bt in ret_df.columns:
-                    series = ret_df[bt].dropna()
+            for idx, m in enumerate(self.asset_Meta):
+                yf_sym = MarketDataLoader.map_to_yahoo_symbol(m["ticker"])
+                if yf_sym and yf_sym in ret_df.columns:
+                    series = ret_df[yf_sym].dropna()
                     if len(series) >= 40:
                         emp_vol = float(series.std() * np.sqrt(252))
                         emp_ret = float(series.mean() * 252)
-                        prior_mu = self.asset_Meta[idx]["expected_return"]
-                        prior_vol = self.asset_Meta[idx]["volatility"]
+                        prior_mu = m["expected_return"]
+                        prior_vol = m["volatility"]
                         # Black-Litterman / Shrinkage blend (50% empirical + 50% prior for return, 70% empirical for vol)
                         blended_mu = float(np.clip(0.5 * emp_ret + 0.5 * prior_mu, 0.05, 0.30))
                         blended_vol = float(np.clip(0.7 * emp_vol + 0.3 * prior_vol, 0.10, 0.65))

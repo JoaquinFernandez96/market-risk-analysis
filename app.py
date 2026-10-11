@@ -10,6 +10,7 @@ from src.portfolio.models import create_default_portfolio, AssetClass
 from src.portfolio.excel_loader import load_portfolio_from_excel, get_excel_template_bytes, DEFAULT_SETTINGS
 from src.pricing.bonds import ArgentineBondPricer
 from src.pricing.derivatives import DerivativesRiskEngine, BlackScholesOption
+from src.data.loader import MarketDataLoader
 from src.risk.var_engine import VaREngine
 from src.risk.stress_testing import StressTestEngine
 from src.risk.mpt_optimizer import (
@@ -153,8 +154,18 @@ curr_view = st.sidebar.radio("Display Currency", ["USD ($)", "ARS ($)"], horizon
 curr_mult = fx_rate if curr_view == "ARS ($)" else 1.0
 curr_sym = "ARS $" if curr_view == "ARS ($)" else "USD $"
 
-var_engine = VaREngine(portfolio)
-stress_engine = StressTestEngine(portfolio)
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 💾 Local Market Data Cache")
+use_live_cache = st.sidebar.checkbox(
+    "Use Local Historical Cache (`yfinance`)",
+    value=True,
+    help="Uses 2-year split/dividend-adjusted daily returns stored in `data/cache/market_returns_cache.csv`. Syncs at most once per day (or only missing tickers when a new stock is added)."
+)
+force_refresh_cache = st.sidebar.button(
+    "🔄 Force Refresh Cache (2Y Revisions)",
+    use_container_width=True,
+    help="Re-downloads the full 2-year `auto_adjust=True` history from Yahoo Finance and overwrites local columns to capture any retroactive stock splits, dividends, or price revisions."
+)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Dashboard Mode & Sizing")
@@ -174,16 +185,30 @@ scale_choice = st.sidebar.selectbox(
 )
 if scale_choice == "Retail Scale ($50,000 USD)":
     portfolio = portfolio.scale_to_nav(50_000.0)
-    var_engine = VaREngine(portfolio)
 elif scale_choice == "Private Wealth ($100,000 USD)":
     portfolio = portfolio.scale_to_nav(100_000.0)
-    var_engine = VaREngine(portfolio)
 elif scale_choice == "Micro Retail ($10,000 USD)":
     portfolio = portfolio.scale_to_nav(10_000.0)
-    var_engine = VaREngine(portfolio)
 elif scale_choice == "Institutional ($10,000,000 USD)":
     portfolio = portfolio.scale_to_nav(10_000_000.0)
-    var_engine = VaREngine(portfolio)
+
+var_engine = VaREngine(
+    portfolio,
+    use_live_cache=use_live_cache,
+    force_refresh=force_refresh_cache,
+)
+stress_engine = StressTestEngine(portfolio)
+
+cache_info = MarketDataLoader.get_cache_status([p.ticker for p in portfolio.positions])
+if use_live_cache and cache_info["has_cache_file"]:
+    st.sidebar.caption(
+        f"✅ **Local Cache Active**: `{cache_info['portfolio_cached_count']}/{cache_info['portfolio_yahoo_eligible']}` equities cached "
+        f"({cache_info['cached_days']} days) • Last sync: `{cache_info['last_sync_date']}`"
+    )
+elif use_live_cache:
+    st.sidebar.caption("⚠️ **Offline / Calibrated Priors Active** (No local cache file yet)")
+else:
+    st.sidebar.caption("ℹ️ **Granular Priors Mode** (Local `yfinance` cache bypassed)")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🎯 MPT & Frontier Settings")
@@ -526,8 +551,8 @@ with tab_mpt:
     with ctrl_c4:
         use_live_yf = st.checkbox(
             "Live yfinance Blend",
-            value=False,
-            help="Fetch trailing 1Y daily adjusted closes from Yahoo Finance for US CEDEAR underlyings and blend with institutional priors."
+            value=use_live_cache,
+            help="Blend empirical returns/volatilities from the persistent local `yfinance` disk cache with institutional priors."
         )
 
     # Build base optimizer and subportfolio if "CEDEARs Only" is selected
