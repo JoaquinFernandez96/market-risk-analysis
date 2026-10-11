@@ -144,7 +144,7 @@ The system is fully modular and allows risk managers to update holdings, prices,
 
 ### Setup
 ```bash
-# Clone the repository (Private)
+# Clone the repository
 git clone https://github.com/JoaquinFernandez96/market-risk-analysis.git
 cd market-risk-analysis
 
